@@ -338,6 +338,81 @@ source material even exists, for any holdBars/phraseGapBeats combination. `close
 `nowPpq` parameter; all 3 call sites (`captureEvent`'s own gap-triggered close, `checkPhraseTimeout`,
 and the processor's stop-triggered close) now pass the real ppq at closure. 2 tests updated/added
 directly covering the new anchor and the floor. 44 assertions, all passing. Rebuilt + reinstalled,
-Build ~18:03 UTC. Live-retest pending - if this closes it out, the SS9 through SS13 arc (gap detection,
-stop scheduling, rewind gating, stop's own clear, the fire condition, per-note firing, and now the
-schedule-time anchor/floor) is finally done.
+Build ~18:03 UTC.
+
+**RESOLVED**: live-retest confirmed Hold Bars=1 now works correctly ("Working well" across many
+takes, status line showed every closed phrase eventually firing). The whole SS9 through SS13 arc
+(gap detection, stop scheduling, rewind gating, stop's own clear, the fire condition, per-note
+firing, and the schedule-time anchor/floor) is done. 11 commits (`09218d4`..`e3d114d`) pushed to
+`github.com/johnpascu77-dotcom/OrchDelay` per explicit user request.
+
+Also explained during this test: a very small Phrase Gap (0.25 beats) can fragment one intended
+phrase into several if the player's own notes have tiny natural gaps inside them - each fragment
+gets its own independently-scheduled echo, landing close together but misaligned ("enters early,
+with overlapping notes"). This is a tuning consideration, not a bug - documented here so a future
+session doesn't mistake it for a regression.
+
+## SS14. v1.1 - transform vocabulary expansion (Rotation, Length, M7) + Random Transpose
+
+User asked to bring the previously-deferred transforms (Docs SS7: "Rotation, Length, M7 - user's own
+settled v1 cut") into scope, plus a way to randomize the Transpose amount per phrase rather than
+always using one fixed value. Three design forks resolved directly with the user via
+`AskUserQuestion` before writing code: keep the Transpose slider's existing continuous range and add
+a separate "Random" toggle (not a discrete named-interval dropdown); Random re-rolls a fresh value
+every echoed phrase via the same deterministic-hash mechanism as Restlessness's own transform pick,
+not only on a manual button press; and yes, bring Rotation/Length/M7 into scope now rather than
+deferring them further.
+
+**Rotation and Length needed real domain adaptation** (re-read MPL's own source,
+`PluginProcessor.cpp`, to ground both rather than guessing):
+
+- **Rotation**: MPL's own formula is `sourceStepIndex = playbackStepIndex - rotation`, wrapped mod
+  the pattern's loop length - a cyclic reassignment of which STORED step's content sounds at a given
+  playback position. OrchDelay's `applyRotation` is a direct, faithful port to a variable-length note
+  list instead of a fixed 16-step grid: slot `i` (in onset order) keeps its OWN onset/duration (the
+  phrase's rhythmic skeleton is never touched), but takes its pitch/velocity/channel from slot
+  `(i - steps) mod noteCount`. Wraps automatically to whatever length the phrase actually has,
+  including a graceful no-op on a 0/1-note phrase, matching MPL's own no-op-on-a-1-step-loop
+  behavior.
+- **Length**: MPL's own Length clamps how many of a pattern's steps play before it loops back -
+  meaningless verbatim for a one-shot device with no loop to clamp. Generalized as a direct
+  truncation instead: `Length%` keeps the first `round(noteCount * percent/100)` notes (at least 1,
+  by onset order), dropping the rest from the echo entirely - the natural reading of "how much of the
+  captured material actually plays" once looping itself is off the table.
+- **M7**: `pitchClass' = (pitchClass * 7) mod 12`, octave register left alone - ported byte-for-byte
+  from MPL's own implementation with NO domain adaptation needed, since it's a pure per-note pitch
+  operation with no timing/grid dependency at all (the one transform, of the three added here, that
+  is a direct unmodified port rather than a reasoned generalization).
+
+`TransformKind` extended to 7 entries (`kTransformRotation=4, kTransformLength=5, kTransformM7=6`).
+`proposeTransform`'s equal-weight random pick widened from 3-way to 6-way (Transpose/Retrograde/
+Inversion/Rotation/Length/M7 - kTransformNone is never itself proposed, matching the original
+design). The `Transform` choice parameter grew from 5 to 8 items (`Follow Restlessness/None/
+Transpose/Retrograde/Inversion/Rotation/Length/M7`).
+
+**Random Transpose**: a new `transposeRandom` bool parameter. When on, the amount actually applied
+per phrase is `odly::resolveRandomTransposeSemitones(instanceSeed, phraseCounter, transposeSemitones)`
+- the SAME deterministic FNV-1a hash construction as `proposeTransform` (salt 3, kept independent of
+the transform-choice draws at salts 1/2), drawn uniformly from `[-|transposeSemitones|,
++|transposeSemitones|]`. The existing "Transpose (semitones)" slider itself becomes the symmetric
+RANGE bound in this mode rather than a literal fixed amount - raising/lowering it still controls "how
+far," just as a ceiling instead of an exact value. Reload-stable and deterministic like every other
+seeded choice in this plugin: same seed + same phrase count always redraws the same amount.
+
+`resolveAndScheduleTransform` now also builds `phrase.outputNotes` using the resolved (possibly
+random) transpose amount plus the raw `rotationSteps`/`lengthPercent` parameter values, read directly
+from their own parameters (only `transposeSemitones` is still passed in, since the stop call site
+needs its own local re-read matching `holdBarsAtStop`'s existing pattern).
+
+New parameters: `rotationSteps` (Int, -16..16, default 1), `lengthPercent` (Float 1-100%, default
+50%), `transposeRandom` (Bool, default false). Editor grew a "Random" toggle next to the Transpose
+slider, plus Rotation and Length slider rows; window height 640->720 to fit.
+
+21 new/updated test assertions (65 total, all passing): `applyRotation` (shift-by-1 exact mapping,
+onsets unchanged, 0-steps no-op, full-wrap no-op, single-note no-op), `applyLength` (100%/50%/1%/
+empty), `applyM7` (fixed point at pitch class 0, octave-preserving mapping, self-inverse round-trip),
+`applyTransform` dispatch for all 3 new kinds, `proposeTransform`'s 6-way coverage (every kind gets
+picked across a large sample), and `resolveRandomTransposeSemitones` (determinism, range bound, zero-
+range collapses to 0, both signs appear across a sample). Rebuilt + reinstalled, Build ~19:43 UTC.
+**Not yet live-tested** - required before calling v1.1 actually done, per this repo's own established
+discipline.

@@ -72,6 +72,9 @@ private:
     std::atomic<float>* restlessnessParameter = nullptr;
     std::atomic<float>* manualTransformParameter = nullptr;
     std::atomic<float>* transposeSemitonesParameter = nullptr;
+    std::atomic<float>* transposeRandomParameter = nullptr;
+    std::atomic<float>* rotationStepsParameter = nullptr;
+    std::atomic<float>* lengthPercentParameter = nullptr;
     std::atomic<float>* instanceSeedParameter = nullptr;
 
     double sampleRate = 44100.0;
@@ -102,7 +105,14 @@ private:
     // and builds its outputNotes (odly::buildOutputNotes) - each note's own
     // independent, absolute output onset/off time, computed once here so
     // firing later never re-derives the transform or bundles the phrase's
-    // notes into a single block's emission.
+    // notes into a single block's emission. `transposeSemitones` is passed
+    // in (the STOP call site needs its own local re-read, matching
+    // holdBarsAtStop's own pattern); rotationSteps/lengthPercent/
+    // transposeRandom are read directly from their own parameters here,
+    // since none of those have that same complication. In Random Transpose
+    // mode, the passed-in transposeSemitones becomes the symmetric RANGE
+    // bound rather than the literal amount used - see
+    // odly::resolveRandomTransposeSemitones.
     void resolveAndScheduleTransform (odly::Phrase& phrase, int transposeSemitones);
 
     // Silences anything currently sounding from a prior firing AND clears

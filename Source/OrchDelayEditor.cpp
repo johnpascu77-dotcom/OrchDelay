@@ -15,7 +15,7 @@ namespace
 OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
-    setSize (520, 640);
+    setSize (520, 720);
 
     titleLabel.setText ("OrchDelay", juce::dontSendNotification);
     titleLabel.setJustificationType (juce::Justification::centred);
@@ -81,6 +81,9 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     transformBox.addItem ("Transpose", 3);
     transformBox.addItem ("Retrograde", 4);
     transformBox.addItem ("Inversion", 5);
+    transformBox.addItem ("Rotation", 6);
+    transformBox.addItem ("Length", 7);
+    transformBox.addItem ("M7", 8);
     transformBox.setColour (juce::ComboBox::backgroundColourId, kBoxBackground);
     transformBox.setColour (juce::ComboBox::textColourId, juce::Colours::white);
     transformBox.setColour (juce::ComboBox::outlineColourId, kOutline);
@@ -89,6 +92,20 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     setupLabel (transposeLabel, "Transpose (semitones)");
     addAndMakeVisible (transposeLabel);
     setupSlider (transposeSlider);
+
+    // "Random" - when on, Transpose becomes a symmetric range bound instead
+    // of a fixed amount (see odly::resolveRandomTransposeSemitones).
+    transposeRandomButton.setButtonText ("Random");
+    transposeRandomButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
+    addAndMakeVisible (transposeRandomButton);
+
+    setupLabel (rotationLabel, "Rotation (steps)");
+    addAndMakeVisible (rotationLabel);
+    setupSlider (rotationSlider);
+
+    setupLabel (lengthLabel, "Length (%)");
+    addAndMakeVisible (lengthLabel);
+    setupSlider (lengthSlider);
 
     setupLabel (instanceSeedLabel, "Instance Seed");
     addAndMakeVisible (instanceSeedLabel);
@@ -112,6 +129,9 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     restlessnessAttachment = std::make_unique<SliderAttachment> (state, "restlessness", restlessnessSlider);
     transformAttachment = std::make_unique<ComboBoxAttachment> (state, "manualTransform", transformBox);
     transposeAttachment = std::make_unique<SliderAttachment> (state, "transposeSemitones", transposeSlider);
+    transposeRandomAttachment = std::make_unique<ButtonAttachment> (state, "transposeRandom", transposeRandomButton);
+    rotationAttachment = std::make_unique<SliderAttachment> (state, "rotationSteps", rotationSlider);
+    lengthAttachment = std::make_unique<SliderAttachment> (state, "lengthPercent", lengthSlider);
     instanceSeedAttachment = std::make_unique<SliderAttachment> (state, "instanceSeed", instanceSeedSlider);
 
     startTimerHz (4);
@@ -159,7 +179,18 @@ void OrchDelayAudioProcessorEditor::resized()
     area.removeFromTop (8);
 
     transposeLabel.setBounds (row (18));
-    transposeSlider.setBounds (row());
+    auto transposeRow = row();
+    transposeRandomButton.setBounds (transposeRow.removeFromRight (90));
+    transposeRow.removeFromRight (8);
+    transposeSlider.setBounds (transposeRow);
+    area.removeFromTop (8);
+
+    rotationLabel.setBounds (row (18));
+    rotationSlider.setBounds (row());
+    area.removeFromTop (8);
+
+    lengthLabel.setBounds (row (18));
+    lengthSlider.setBounds (row());
     area.removeFromTop (8);
 
     instanceSeedLabel.setBounds (row (18));

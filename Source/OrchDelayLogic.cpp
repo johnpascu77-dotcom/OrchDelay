@@ -176,24 +176,77 @@ namespace odly
         return out;
     }
 
+    std::vector<HeldNote> applyRotation (const std::vector<HeldNote>& notes, int steps)
+    {
+        std::vector<HeldNote> out = notes;
+        const int n = static_cast<int> (notes.size());
+        if (n <= 1)
+            return out;   // a 0/1-note "loop" has nothing to rotate, same as MPL
+
+        const int effectiveSteps = ((steps % n) + n) % n;
+
+        for (int i = 0; i < n; ++i)
+        {
+            const int sourceIndex = ((i - effectiveSteps) % n + n) % n;
+            // Slot i keeps its OWN onset/duration (the rhythmic skeleton) -
+            // only the CONTENT (pitch/velocity/channel) is reassigned from
+            // the source slot, matching MPL's own "which stored step plays
+            // here" semantics.
+            out[static_cast<size_t> (i)].pitch = notes[static_cast<size_t> (sourceIndex)].pitch;
+            out[static_cast<size_t> (i)].velocity = notes[static_cast<size_t> (sourceIndex)].velocity;
+            out[static_cast<size_t> (i)].channel = notes[static_cast<size_t> (sourceIndex)].channel;
+        }
+
+        return out;
+    }
+
+    std::vector<HeldNote> applyLength (const std::vector<HeldNote>& notes, float lengthPercent)
+    {
+        if (notes.empty())
+            return notes;
+
+        const float clamped = juce::jlimit (0.0f, 100.0f, lengthPercent);
+        const int keepCount = juce::jlimit (1, static_cast<int> (notes.size()),
+                                            juce::roundToInt (static_cast<float> (notes.size()) * clamped / 100.0f));
+
+        return std::vector<HeldNote> (notes.begin(), notes.begin() + keepCount);
+    }
+
+    std::vector<HeldNote> applyM7 (const std::vector<HeldNote>& notes)
+    {
+        std::vector<HeldNote> out = notes;
+        for (auto& n : out)
+        {
+            const int pitchClass = ((n.pitch % 12) + 12) % 12;
+            const int m7PitchClass = (pitchClass * 7) % 12;
+            n.pitch = juce::jlimit (0, 127, n.pitch - pitchClass + m7PitchClass);
+        }
+        return out;
+    }
+
     std::vector<HeldNote> applyTransform (const std::vector<HeldNote>& notes, int transformKind,
-                                          double phraseStartPpq, double phraseEndPpq, int transposeSemitones)
+                                          double phraseStartPpq, double phraseEndPpq, int transposeSemitones,
+                                          int rotationSteps, float lengthPercent)
     {
         switch (transformKind)
         {
             case kTransformTranspose:  return applyTranspose (notes, transposeSemitones);
             case kTransformRetrograde: return applyRetrograde (notes, phraseStartPpq, phraseEndPpq);
             case kTransformInversion:  return applyInversion (notes);
+            case kTransformRotation:   return applyRotation (notes, rotationSteps);
+            case kTransformLength:     return applyLength (notes, lengthPercent);
+            case kTransformM7:         return applyM7 (notes);
             case kTransformNone:
             default:                   return notes;
         }
     }
 
-    std::vector<ScheduledNote> buildOutputNotes (const Phrase& phrase, int transposeSemitones)
+    std::vector<ScheduledNote> buildOutputNotes (const Phrase& phrase, int transposeSemitones,
+                                                 int rotationSteps, float lengthPercent)
     {
         const auto transformed = applyTransform (phrase.notes, phrase.chosenTransform,
                                                   phrase.phraseStartPpq, phrase.phraseEndPpq,
-                                                  transposeSemitones);
+                                                  transposeSemitones, rotationSteps, lengthPercent);
 
         std::vector<ScheduledNote> out;
         out.reserve (transformed.size());
@@ -247,7 +300,20 @@ namespace odly
             return proposal;
 
         const juce::uint32 h = fnv1aHash (instanceSeed, phraseCounter, 2);
-        proposal.transformKind = 1 + static_cast<int> (h % 3u);   // 1=Transpose,2=Retrograde,3=Inversion
+        // 1=Transpose,2=Retrograde,3=Inversion,4=Rotation,5=Length,6=M7
+        proposal.transformKind = 1 + static_cast<int> (h % 6u);
         return proposal;
+    }
+
+    int resolveRandomTransposeSemitones (int instanceSeed, int phraseCounter, int rangeSemitones)
+    {
+        const int bound = juce::jlimit (0, 48, rangeSemitones < 0 ? -rangeSemitones : rangeSemitones);
+        if (bound == 0)
+            return 0;
+
+        const float unit = hashUnit (instanceSeed, phraseCounter, 3);   // salt 3 - independent of proposeTransform's 1/2
+        const int span = 2 * bound + 1;   // inclusive [-bound, +bound]
+        const int offset = juce::jlimit (0, span - 1, static_cast<int> (unit * static_cast<float> (span)));
+        return -bound + offset;
     }
 }

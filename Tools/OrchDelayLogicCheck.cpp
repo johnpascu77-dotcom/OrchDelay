@@ -298,7 +298,7 @@ int main()
         p.notes.push_back (makeNote (2.0, 0.95, 64));
         p.notes.push_back (makeNote (3.0, 0.95, 65));
 
-        auto out = odly::buildOutputNotes (p, 0);
+        auto out = odly::buildOutputNotes (p, 0, 0, 100.0f);
         check (out.size() == 4, "buildOutputNotes: same note count as the phrase");
         // Each note's own output onset = scheduledFirePpq + (its own onset - phraseStart) -
         // NOT all collapsed onto scheduledFirePpq itself.
@@ -310,13 +310,123 @@ int main()
         check (! out[0].emitted && ! out[1].emitted, "buildOutputNotes: notes start unemitted");
     }
 
+    // --- applyRotation: cyclic reassignment of pitch among onset slots -------
+    {
+        // 4-note phrase, pitches C E G C (60,64,67,60), onsets 0,1,2,3.
+        std::vector<odly::HeldNote> notes {
+            makeNote (0.0, 1.0, 60), makeNote (1.0, 1.0, 64), makeNote (2.0, 1.0, 67), makeNote (3.0, 1.0, 60)
+        };
+        auto out1 = odly::applyRotation (notes, 1);
+        // slot i takes its pitch from slot (i-1) mod 4: slot0<-slot3(60), slot1<-slot0(60), slot2<-slot1(64), slot3<-slot2(67)
+        check (out1[0].pitch == 60 && out1[1].pitch == 60 && out1[2].pitch == 64 && out1[3].pitch == 67,
+              "rotation: steps=1 shifts pitches forward one slot (source = playback - rotation)");
+        // onsets/durations (the rhythmic skeleton) are UNCHANGED by rotation.
+        check (std::abs (out1[0].onsetPpq - 0.0) < 1e-9 && std::abs (out1[3].onsetPpq - 3.0) < 1e-9,
+              "rotation: onsets stay exactly where they were - only pitch content moves");
+
+        auto out0 = odly::applyRotation (notes, 0);
+        check (out0[0].pitch == 60 && out0[1].pitch == 64 && out0[2].pitch == 67 && out0[3].pitch == 60,
+              "rotation: steps=0 is a no-op");
+
+        auto outWrap = odly::applyRotation (notes, 4);   // a full rotation of a 4-note phrase wraps to itself
+        check (outWrap[0].pitch == 60 && outWrap[1].pitch == 64 && outWrap[2].pitch == 67 && outWrap[3].pitch == 60,
+              "rotation: steps==noteCount wraps back to a no-op, same as MPL rotating a full loop");
+
+        std::vector<odly::HeldNote> oneNote { makeNote (0.0, 1.0, 60) };
+        auto outSingle = odly::applyRotation (oneNote, 5);
+        check (outSingle[0].pitch == 60, "rotation: a single-note phrase is always a no-op regardless of amount");
+    }
+
+    // --- applyLength: truncates to the first N% of notes by onset order -----
+    {
+        std::vector<odly::HeldNote> notes {
+            makeNote (0.0, 1.0, 60), makeNote (1.0, 1.0, 62), makeNote (2.0, 1.0, 64), makeNote (3.0, 1.0, 65)
+        };
+        auto out100 = odly::applyLength (notes, 100.0f);
+        check (out100.size() == 4, "length: 100% keeps the whole phrase");
+
+        auto out50 = odly::applyLength (notes, 50.0f);
+        check (out50.size() == 2 && out50[0].pitch == 60 && out50[1].pitch == 62,
+              "length: 50% keeps the FIRST half of the notes, by onset order");
+
+        auto out1 = odly::applyLength (notes, 1.0f);
+        check (out1.size() == 1 && out1[0].pitch == 60, "length: a tiny percentage still keeps at least 1 note");
+
+        auto outEmpty = odly::applyLength ({}, 50.0f);
+        check (outEmpty.empty(), "length: an empty phrase stays empty, no crash");
+    }
+
+    // --- applyM7: pitch-class x7 mod 12, octave register preserved ----------
+    {
+        std::vector<odly::HeldNote> notes {
+            makeNote (0.0, 1.0, 60),   // C4, pitch class 0 -> 0 (fixed point)
+            makeNote (1.0, 1.0, 61),   // C#4, pitch class 1 -> 7 (G)
+            makeNote (2.0, 1.0, 67)    // G4, pitch class 7 -> 1 (C#)
+        };
+        auto out = odly::applyM7 (notes);
+        check (out[0].pitch == 60, "M7: pitch class 0 (C) is a fixed point");
+        check (out[1].pitch == 67, "M7: C#4 (61) maps to G in the SAME octave (67), not just the pitch class");
+        check (out[2].pitch == 61, "M7: G4 (67) maps to C# in the same octave (61) - M7 is its own inverse of note 2");
+
+        auto backAgain = odly::applyM7 (out);
+        check (backAgain[0].pitch == 60 && backAgain[1].pitch == 61 && backAgain[2].pitch == 67,
+              "M7: applying it twice is a no-op (M7 is its own inverse, 7*7 mod 12 == 1) - matches MPL's own convention");
+    }
+
     // --- applyTransform dispatch ----------------------------------------------
     {
-        std::vector<odly::HeldNote> notes { makeNote (0.0, 1.0, 60) };
-        auto same = odly::applyTransform (notes, odly::kTransformNone, 0.0, 1.0, 12);
+        std::vector<odly::HeldNote> notes {
+            makeNote (0.0, 1.0, 60), makeNote (1.0, 1.0, 64), makeNote (2.0, 1.0, 67), makeNote (3.0, 1.0, 60)
+        };
+        auto same = odly::applyTransform (notes, odly::kTransformNone, 0.0, 4.0, 12, 0, 100.0f);
         check (same[0].pitch == 60, "applyTransform: kTransformNone returns input unchanged");
-        auto up = odly::applyTransform (notes, odly::kTransformTranspose, 0.0, 1.0, 12);
+        auto up = odly::applyTransform (notes, odly::kTransformTranspose, 0.0, 4.0, 12, 0, 100.0f);
         check (up[0].pitch == 72, "applyTransform: dispatches to Transpose correctly");
+        auto rot = odly::applyTransform (notes, odly::kTransformRotation, 0.0, 4.0, 12, 1, 100.0f);
+        check (rot[0].pitch == 60 && rot[1].pitch == 60, "applyTransform: dispatches to Rotation correctly");
+        auto len = odly::applyTransform (notes, odly::kTransformLength, 0.0, 4.0, 12, 0, 50.0f);
+        check (len.size() == 2, "applyTransform: dispatches to Length correctly");
+        auto m7 = odly::applyTransform (notes, odly::kTransformM7, 0.0, 4.0, 12, 0, 100.0f);
+        check (m7[0].pitch == 60, "applyTransform: dispatches to M7 correctly");
+    }
+
+    // --- proposeTransform: 6-way pick now covers the full vocabulary --------
+    {
+        int seenKinds[7] = { 0 };   // index 0 unused (kTransformNone never proposed when applyAny)
+        bool everyPickInRange = true;
+        for (int i = 0; i < 4000; ++i)
+        {
+            auto p = odly::proposeTransform (99, i, 1.0f);   // restlessness=1 -> always proposes
+            if (p.transformKind < odly::kTransformTranspose || p.transformKind > odly::kTransformM7)
+                everyPickInRange = false;
+            seenKinds[p.transformKind]++;
+        }
+        check (everyPickInRange, "proposeTransform: always picks one of the 6 real transforms, never None, at restlessness=1");
+
+        bool allSeen = true;
+        for (int k = odly::kTransformTranspose; k <= odly::kTransformM7; ++k)
+            if (seenKinds[k] == 0) allSeen = false;
+        check (allSeen, "proposeTransform: all 6 transforms (including the newly-added Rotation/Length/M7) get picked across a large sample");
+    }
+
+    // --- resolveRandomTransposeSemitones: deterministic, ranged, symmetric ---
+    {
+        const int a = odly::resolveRandomTransposeSemitones (5, 3, 12);
+        const int b = odly::resolveRandomTransposeSemitones (5, 3, 12);
+        check (a == b, "resolveRandomTransposeSemitones: identical inputs always produce identical outputs (determinism)");
+        check (a >= -12 && a <= 12, "resolveRandomTransposeSemitones: result stays within [-range, +range]");
+
+        check (odly::resolveRandomTransposeSemitones (5, 3, 0) == 0,
+              "resolveRandomTransposeSemitones: a zero range always resolves to 0");
+
+        bool sawNegative = false, sawPositive = false;
+        for (int i = 0; i < 200; ++i)
+        {
+            const int v = odly::resolveRandomTransposeSemitones (5, i, 12);
+            if (v < 0) sawNegative = true;
+            if (v > 0) sawPositive = true;
+        }
+        check (sawNegative && sawPositive, "resolveRandomTransposeSemitones: draws both negative and positive values across a sample");
     }
 
     std::cout << "-------------------------\n";

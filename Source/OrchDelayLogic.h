@@ -10,9 +10,10 @@
 //
 // Scope (see Docs/OrchDelay_Design.md SS2): this holds a captured phrase and
 // fires it back once, N bars later, optionally transformed as a whole. It
-// does not loop/repeat a phrase, and it does not talk CC-to-MPL - the three
-// v1 transforms (Transpose/Retrograde/Inversion) are reimplemented here
-// directly on the buffered note data, not routed through an external engine.
+// does not loop/repeat a phrase, and it does not talk CC-to-MPL - the full
+// transform vocabulary (Transpose/Retrograde/Inversion/Rotation/Length/M7,
+// see Docs SS14 for the v1.1 expansion) is reimplemented here directly on
+// the buffered note data, not routed through an external engine.
 namespace odly
 {
     // One buffered note occurrence. `seq` identifies THIS specific occurrence
@@ -80,7 +81,10 @@ namespace odly
         kTransformNone = 0,
         kTransformTranspose = 1,
         kTransformRetrograde = 2,
-        kTransformInversion = 3
+        kTransformInversion = 3,
+        kTransformRotation = 4,
+        kTransformLength = 5,
+        kTransformM7 = 6
     };
 
     // A note-on/note-off/note-off-with-no-velocity event, the raw input this
@@ -202,10 +206,38 @@ namespace odly
     std::vector<HeldNote> applyRetrograde (const std::vector<HeldNote>& notes,
                                            double phraseStartPpq, double phraseEndPpq);
 
+    // Cyclic reassignment of WHICH captured note's pitch/velocity/channel
+    // sounds at each onset/duration "slot" - a direct port of MPL's own
+    // Rotation (`sourceStepIndex = playbackStepIndex - rotation`, wrapped
+    // mod the pattern length), generalized from a fixed 16-step grid to
+    // OrchDelay's own variable-length note list: slot i takes its pitch/
+    // velocity/channel from slot `(i - steps) mod noteCount`, while keeping
+    // slot i's OWN onset/duration (the phrase's rhythmic skeleton is
+    // unchanged - only which pitch lands where shifts). `steps` wraps
+    // automatically for any phrase length, including a 0/1-note phrase
+    // (a no-op, same as MPL rotating a 1-step loop).
+    std::vector<HeldNote> applyRotation (const std::vector<HeldNote>& notes, int steps);
+
+    // Truncates the phrase to its first `lengthPercent`% of notes (by onset
+    // order), at least 1 - a direct generalization of MPL's own Length (how
+    // many of the pattern's steps play before it loops) to a one-shot
+    // device with no loop to clamp: here it simply trims how much of the
+    // captured material gets echoed at all.
+    std::vector<HeldNote> applyLength (const std::vector<HeldNote>& notes, float lengthPercent);
+
+    // Pitch-class multiplication by 7 mod 12 - ported byte-for-byte from
+    // MPL's own M7 (`pitchClass' = (pitchClass * 7) mod 12`, octave
+    // register left alone). A genuine twelve-tone permutation, distinct
+    // from Transpose (additive) and Inversion (reflective); needs no domain
+    // adaptation since it's a pure per-note pitch operation with no timing/
+    // grid dependency - the one v1.1 transform that ports over unchanged.
+    std::vector<HeldNote> applyM7 (const std::vector<HeldNote>& notes);
+
     // Dispatches to the right transform above by `TransformKind`; kTransformNone
     // returns the input unchanged (a plain copy).
     std::vector<HeldNote> applyTransform (const std::vector<HeldNote>& notes, int transformKind,
-                                          double phraseStartPpq, double phraseEndPpq, int transposeSemitones);
+                                          double phraseStartPpq, double phraseEndPpq, int transposeSemitones,
+                                          int rotationSteps, float lengthPercent);
 
     // Resolves `phrase`'s chosen transform AND the schedule-time shift
     // (scheduledFirePpq relative to phraseStartPpq) into a list of
@@ -216,7 +248,8 @@ namespace odly
     // against the current block, one at a time - never bundles a whole
     // phrase's notes into a single block's emission (see Phrase's own doc
     // comment for why that used to be a real bug).
-    std::vector<ScheduledNote> buildOutputNotes (const Phrase& phrase, int transposeSemitones);
+    std::vector<ScheduledNote> buildOutputNotes (const Phrase& phrase, int transposeSemitones,
+                                                 int rotationSteps, float lengthPercent);
 
     // --- Restlessness-driven transform proposal -----------------------------
     // A stateless FNV-1a-style hash (byte-for-byte port of OrchGate's own
@@ -238,13 +271,27 @@ namespace odly
 
     // restlessness (0..1) IS the probability of proposing a non-verbatim
     // transform for this phrase - at 0, always verbatim; at 1, always
-    // transforms. If applyAny, an equal-weight 3-way pick among the v1
-    // transforms (no evidence yet to favor one - see Docs SS7).
+    // transforms. If applyAny, an equal-weight 6-way pick among the full
+    // transform vocabulary - Transpose/Retrograde/Inversion/Rotation/
+    // Length/M7 (no evidence yet to favor one - see Docs SS7; extended from
+    // 3-way to 6-way when Rotation/Length/M7 were added).
     // `instanceSeed`: this OrchDelay instance's own identity (0-127 param).
     // `phraseCounter`: increments once per phrase closure - takes the role
     // OrchGate's broadcast "mode" CC plays, since v1 has no OrchConductor
     // bridge to hash against.
     TransformProposal proposeTransform (int instanceSeed, int phraseCounter, float restlessness);
+
+    // Resolves the ACTUAL transpose amount to use when Random Transpose mode
+    // is on: deterministic (same instanceSeed+phraseCounter -> same result,
+    // reload-stable, same hash construction as proposeTransform but salt 3
+    // to stay independent of the transform-choice draws), drawn uniformly
+    // from [-|rangeSemitones|, +|rangeSemitones|]. The Transpose (semitones)
+    // parameter itself becomes this symmetric RANGE bound in Random mode,
+    // rather than a literal fixed amount - so raising/lowering that one
+    // slider still controls "how far," just now as a ceiling instead of an
+    // exact value. rangeSemitones==0 always resolves to 0 (no range to draw
+    // from).
+    int resolveRandomTransposeSemitones (int instanceSeed, int phraseCounter, int rangeSemitones);
 
     // --- Stuck-note-cleanup discipline (see Docs SS2) -----------------------
     // A single note-off "occurrence" this OrchDelay instance owes the output

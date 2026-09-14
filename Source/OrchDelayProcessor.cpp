@@ -21,6 +21,9 @@ OrchDelayAudioProcessor::OrchDelayAudioProcessor()
     restlessnessParameter = parameters.getRawParameterValue ("restlessness");
     manualTransformParameter = parameters.getRawParameterValue ("manualTransform");
     transposeSemitonesParameter = parameters.getRawParameterValue ("transposeSemitones");
+    transposeRandomParameter = parameters.getRawParameterValue ("transposeRandom");
+    rotationStepsParameter = parameters.getRawParameterValue ("rotationSteps");
+    lengthPercentParameter = parameters.getRawParameterValue ("lengthPercent");
     instanceSeedParameter = parameters.getRawParameterValue ("instanceSeed");
 }
 
@@ -77,10 +80,16 @@ void OrchDelayAudioProcessor::resolveAndScheduleTransform (odly::Phrase& phrase,
         ? juce::roundToInt (manualTransformParameter->load()) : 0;
     const int instanceSeed = instanceSeedParameter != nullptr
         ? juce::jlimit (0, 127, juce::roundToInt (instanceSeedParameter->load())) : 0;
+    const bool transposeRandom = transposeRandomParameter != nullptr && transposeRandomParameter->load() >= 0.5f;
+    const int rotationSteps = rotationStepsParameter != nullptr
+        ? juce::roundToInt (rotationStepsParameter->load()) : 0;
+    const float lengthPercent = lengthPercentParameter != nullptr
+        ? juce::jlimit (0.0f, 100.0f, lengthPercentParameter->load()) : 100.0f;
 
     // Choice indices: 0=Follow Restlessness, 1=None, 2=Transpose, 3=Retrograde,
-    // 4=Inversion - any explicit choice (>0) always wins outright, no blending
-    // with the proposal mechanism (see this header's own doc comment).
+    // 4=Inversion, 5=Rotation, 6=Length, 7=M7 - any explicit choice (>0)
+    // always wins outright, no blending with the proposal mechanism (see
+    // this header's own doc comment).
     if (manualChoice > 0)
         phrase.chosenTransform = manualChoice - 1;   // maps directly onto odly::TransformKind
     else
@@ -89,10 +98,17 @@ void OrchDelayAudioProcessor::resolveAndScheduleTransform (odly::Phrase& phrase,
         phrase.chosenTransform = proposal.applyAny ? proposal.transformKind : odly::kTransformNone;
     }
 
+    // Random Transpose mode: the passed-in transposeSemitones becomes the
+    // symmetric RANGE bound to draw from, rather than the literal amount -
+    // see odly::resolveRandomTransposeSemitones's own doc comment.
+    const int resolvedTransposeSemitones = transposeRandom
+        ? odly::resolveRandomTransposeSemitones (instanceSeed, phraseCounter, transposeSemitones)
+        : transposeSemitones;
+
     // Built ONCE here, not re-derived at fire time - see odly::Phrase's own
     // doc comment for why bundling a phrase's notes into one block's
     // emission (the old approach) was a real bug.
-    phrase.outputNotes = odly::buildOutputNotes (phrase, transposeSemitones);
+    phrase.outputNotes = odly::buildOutputNotes (phrase, resolvedTransposeSemitones, rotationSteps, lengthPercent);
 }
 
 void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
@@ -553,17 +569,58 @@ juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::cre
             })));
 
     // Manual override - any explicit choice always wins outright over the
-    // restlessness proposal (see resolveAndScheduleTransform).
+    // restlessness proposal (see resolveAndScheduleTransform). v1.1 adds
+    // Rotation/Length/M7 to the original v1 set (Transpose/Retrograde/
+    // Inversion) - see Docs SS14.
     params.push_back (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { "manualTransform", 1 },
         "Transform",
-        juce::StringArray { "Follow Restlessness", "None", "Transpose", "Retrograde", "Inversion" },
+        juce::StringArray { "Follow Restlessness", "None", "Transpose", "Retrograde", "Inversion",
+                            "Rotation", "Length", "M7" },
         0));
 
     params.push_back (std::make_unique<juce::AudioParameterInt> (
         juce::ParameterID { "transposeSemitones", 1 },
         "Transpose (semitones)",
         -48, 48, 12));
+
+    // When on, the amount actually used per phrase is drawn deterministically
+    // (Instance Seed + phrase count, reload-stable) from [-|Transpose|,
+    // +|Transpose|] instead of always using the fixed Transpose value - see
+    // odly::resolveRandomTransposeSemitones. Only affects the Transpose
+    // transform, whether reached manually or via Follow Restlessness.
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "transposeRandom", 1 },
+        "Random Transpose",
+        false));
+
+    // Rotation amount - cyclic reassignment of which captured note's pitch
+    // plays at each onset slot (see odly::applyRotation). Wraps automatically
+    // to the actual phrase's own note count, so this fixed UI range is just a
+    // convenient sweep, not a hard musical limit.
+    params.push_back (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { "rotationSteps", 1 },
+        "Rotation (steps)",
+        -16, 16, 1));
+
+    // How much of the captured phrase (by note count, first-to-last) actually
+    // gets echoed - see odly::applyLength. 100% = the whole phrase, matching
+    // every other transform's own "no shortening" baseline.
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lengthPercent", 1 },
+        "Length (%)",
+        juce::NormalisableRange<float> (1.0f, 100.0f, 1.0f),
+        50.0f,
+        juce::AudioParameterFloatAttributes()
+            .withLabel ("%")
+            .withStringFromValueFunction ([] (float value, int)
+            {
+                return juce::String (juce::roundToInt (value)) + "%";
+            })
+            .withValueFromStringFunction ([] (const juce::String& text)
+            {
+                return text.retainCharacters ("0123456789.").getFloatValue();
+            })));
 
     // This instance's own hash key for the restlessness proposal (see
     // odly::proposeTransform / fnv1aHash) - gives multiple OrchDelay
