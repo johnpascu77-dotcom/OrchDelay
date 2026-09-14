@@ -204,15 +204,24 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         drainAndSilence (output, 0);
     }
 
-    if (rewound)
+    // Only act on a backward jump while actually PLAYING through it - never
+    // while stopped. Bitwig's own Stop button returns the playhead to the
+    // play-start position by default (unlike most DAWs, which pause in
+    // place); without this `playing` gate, that auto-return registers as a
+    // backward jump on the very same stop that just closed-and-scheduled
+    // the open phrase (see `stoppedPlaying` above), purging it again
+    // immediately - a phrase would close, get scheduled, and vanish within
+    // one single Stop press, with nothing ever reaching pendingPhrases by
+    // the time the UI could show it. A relocation that happens purely while
+    // stopped needs no purge at all - nothing depends on ppq continuity
+    // until playback actually resumes, and blockEndPpq's own not-playing
+    // branch keeps lastBlockEndPpq pinned at the true frozen position
+    // throughout, so a genuine resume-from-an-earlier-point is still caught
+    // correctly the moment `playing` goes true again.
+    if (rewound && playing)
     {
         // Purge outright rather than attempting to re-map ppq across the
-        // discontinuity - simple and correct (Docs SS2). Covers both a
-        // loop/relocate during continuous playback and the playhead moved
-        // backward while stopped, then resumed - an ordinary resume from
-        // exactly where playback paused does NOT land here (see `rewound`'s
-        // own doc comment), so a phrase closed-and-scheduled at stop
-        // survives a plain stop/resume and still fires on schedule.
+        // discontinuity - simple and correct (Docs SS2).
         openPhrase = odly::Phrase {};
         pendingPhrases.clear();
         drainAndSilence (output, 0);

@@ -226,5 +226,35 @@ a clear at all.
 This is a processor-level integration behavior (state across the stop/resume transport transition,
 `wasPlaying`/`lastBlockEndPpq` bookkeeping), not something expressible as a pure `odly::` function, so
 it isn't covered by `OrchDelayLogicCheck` - noted here as a real verification gap rather than forcing
-an awkward test. **Not yet live-retested in Bitwig** with this second fix - required before either
-SS9 or SS10 can be called actually resolved.
+an awkward test.
+
+## SS11. Third live test (2026-09-14) - diagnostic counters + the actual root cause found
+
+Added 3 session-lifetime counters to the editor status line (`notesCapturedForUi`/
+`phrasesClosedForUi`/`phrasesFiredForUi`, reset only on `prepareToPlay`) specifically to stop guessing
+blind after two silent-result rounds. Third test result: **captured 4, closed 1, fired 0, pending 0**.
+This was immediately diagnostic: all 4 notes correctly grouped into ONE phrase (confirms the SS9 gap
+fix works), that phrase correctly closed and got scheduled (confirms the SS10 stop-schedules-instead-
+of-discards fix works) - but it vanished before firing, with nothing left pending. Something purged it
+between scheduling and firing.
+
+**Root cause**: Bitwig's own Stop button returns the playhead to the play-start position by default -
+unlike most DAWs, which just pause in place at the stop point. The `rewound` check (SS10's own
+generalization, deliberately no longer gated on `playing && wasPlaying` so it could also catch a
+backward relocation made while stopped) was still unconditional in when it ACTED - so the very same
+Stop press that correctly closed-and-scheduled the open phrase (via `stoppedPlaying`, SS10) was
+immediately followed by Bitwig's playhead snapping back to the start, which read as a backward jump
+and purged `pendingPhrases` right back out again, all within the handling of one single Stop press.
+The phrase never had a chance to actually sit in the pending queue where the UI (or anything else)
+could observe it.
+
+**Fix**: `rewound`'s purge is now gated on `playing` (`if (rewound && playing)`) - a backward jump is
+only acted on while actually playing THROUGH it. A relocation that happens purely while stopped needs
+no purge: nothing depends on ppq continuity until playback resumes, and `blockEndPpq`'s own
+not-playing branch (SS10) already keeps `lastBlockEndPpq` pinned at the true frozen position
+throughout a stop, so a genuine resume-from-an-earlier-point is still caught correctly the moment
+`playing` goes true again - this fix only changes behavior for a jump detected while stopped, which
+previously purged for no operational reason (nothing was going to fire while stopped anyway).
+
+Live-tested after this fix: pending. If the counters next show `closed 1, fired 1` after a normal
+play/stop cycle, this closes out the SS9/SS10/SS11 arc. Rebuilt + reinstalled VST3, Build ~17:17 UTC.
