@@ -215,7 +215,7 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
                 ? juce::jlimit (1, 16, juce::roundToInt (holdBarsParameter->load())) : 4;
             const int transposeSemitonesAtStop = transposeSemitonesParameter != nullptr
                 ? juce::jlimit (-48, 48, juce::roundToInt (transposeSemitonesParameter->load())) : 12;
-            odly::closePhrase (openPhrase, holdBarsAtStop, beatsPerBarNow);
+            odly::closePhrase (openPhrase, holdBarsAtStop, beatsPerBarNow, blockStartPpq);
             ++phraseCounter;
             totalPhrasesClosedUi.fetch_add (1);
             lastScheduledFirePpqUi.store (openPhrase.scheduledFirePpq);

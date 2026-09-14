@@ -137,11 +137,22 @@ namespace odly
     // marking it closed here is what makes a later real note-off for it
     // correctly read as a stray with no open match, per captureEvent's own
     // doc), finalizes phraseStartPpq/phraseEndPpq, and computes
-    // scheduledFirePpq = phraseStartPpq + holdBars * beatsPerBar using the
-    // METER ACTIVE AT THIS CALL (capture time), never re-derived later - see
-    // Docs SS3 for why fire-time meter changes must not retroactively change
-    // what "N bars" meant. Sets `phrase.closed = true`.
-    void closePhrase (Phrase& phrase, int holdBars, double beatsPerBar);
+    // scheduledFirePpq = phraseEndPpq + holdBars * beatsPerBar, floored at
+    // `nowPpq` (the ppq at the moment of THIS closure call) - anchored to
+    // where the phrase ENDS, not where it started (the natural reading of
+    // "responsorial": answer N bars after the phrase is done, not N bars
+    // after it began), and never allowed to land before the phrase is even
+    // known to be closed. Without the `nowPpq` floor, a short holdBars
+    // (comparable to or shorter than phraseGapBeats) could put
+    // phraseEndPpq + holdBars*bar BEFORE the phrase actually finishes
+    // closing - since closure itself can't happen until phraseGapBeats of
+    // rest has elapsed past phraseEndPpq - which crammed the echo's first
+    // note or two into whichever block first noticed the (already overdue)
+    // phrase, a real live-tested bug. Uses the METER ACTIVE AT THIS CALL
+    // (capture time), never re-derived later - see Docs SS3 for why
+    // fire-time meter changes must not retroactively change what "N bars"
+    // meant. Sets `phrase.closed = true`.
+    void closePhrase (Phrase& phrase, int holdBars, double beatsPerBar, double nowPpq);
 
     // Proactively closes `openPhrase` if the rest since its last note's END
     // is at/above `phraseGapBeats`, with NO new note-on required to detect

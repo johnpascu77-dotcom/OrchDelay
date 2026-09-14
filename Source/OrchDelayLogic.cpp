@@ -16,7 +16,7 @@ namespace odly
         return numerator * 4.0 / static_cast<double> (denominator);
     }
 
-    void closePhrase (Phrase& phrase, int holdBars, double beatsPerBarNow)
+    void closePhrase (Phrase& phrase, int holdBars, double beatsPerBarNow, double nowPpq)
     {
         if (! phrase.notes.empty())
             phrase.phraseStartPpq = phrase.notes.front().onsetPpq;
@@ -34,7 +34,16 @@ namespace odly
         }
 
         phrase.phraseEndPpq = latestEndPpq;
-        phrase.scheduledFirePpq = phrase.phraseStartPpq + juce::jmax (1, holdBars) * beatsPerBarNow;
+
+        // Anchored to phraseEnd, not phraseStart - see this function's own
+        // doc comment. Also floored at `nowPpq` (the moment of closure
+        // itself): a phrase can't close until phraseGapBeats of rest has
+        // elapsed past its own end, so for a short holdBars (comparable to
+        // or shorter than phraseGapBeats), phraseEnd + holdBars*bar could
+        // otherwise land BEFORE the phrase is even known to be closed - an
+        // echo can never start before its own source material exists.
+        const double holdTargetPpq = phrase.phraseEndPpq + juce::jmax (1, holdBars) * beatsPerBarNow;
+        phrase.scheduledFirePpq = juce::jmax (holdTargetPpq, nowPpq);
         phrase.closed = true;
     }
 
@@ -66,7 +75,7 @@ namespace odly
 
             if (gapExceeded)
             {
-                closePhrase (openPhrase, holdBars, beatsPerBarNow);
+                closePhrase (openPhrase, holdBars, beatsPerBarNow, event.ppq);
                 result.phraseClosed = true;
                 result.closedPhrase = openPhrase;
 
@@ -119,7 +128,7 @@ namespace odly
         if ((nowPpq - lastEndPpq) < phraseGapBeats)
             return result;
 
-        closePhrase (openPhrase, holdBars, beatsPerBarNow);
+        closePhrase (openPhrase, holdBars, beatsPerBarNow, nowPpq);
         result.phraseClosed = true;
         result.closedPhrase = openPhrase;
         openPhrase = Phrase {};

@@ -171,19 +171,38 @@ int main()
         p.notes.push_back (makeNote (0.0, 0.0, 60));
         p.notes.back().hasNoteOff = false;   // still held when the phrase closes
         p.notes.push_back (makeNote (0.5, 0.5, 62));
-        odly::closePhrase (p, 4, 4.0);
+        odly::closePhrase (p, 4, 4.0, 1.0);
         check (p.notes[0].hasNoteOff && std::abs (p.notes[0].durationPpq - 0.5) < 1e-9,
               "closePhrase: a straddling held note gets the 0.5-beat fallback duration and closes");
         check (p.closed, "closePhrase: sets closed=true");
     }
 
-    // --- scheduledFirePpq: meter frozen at closure time ----------------------
+    // --- scheduledFirePpq: anchored to phraseEnd, meter frozen at closure ---
     {
         odly::Phrase p;
-        p.notes.push_back (makeNote (10.0, 1.0, 60));
-        odly::closePhrase (p, 4, 4.0);   // 4 bars of 4/4 = 16 quarter notes
-        check (std::abs (p.scheduledFirePpq - (10.0 + 16.0)) < 1e-9,
-              "scheduledFirePpq: phraseStart + holdBars*beatsPerBar, using the meter at closure");
+        p.notes.push_back (makeNote (10.0, 1.0, 60));   // phraseEndPpq = 11.0
+        odly::closePhrase (p, 4, 4.0, 12.0);   // 4 bars of 4/4 = 16 quarter notes; closure at ppq 12
+        check (std::abs (p.scheduledFirePpq - (11.0 + 16.0)) < 1e-9,
+              "scheduledFirePpq: phraseEnd + holdBars*beatsPerBar - anchored to when the phrase ENDS, "
+              "not when it started - using the meter at closure");
+    }
+
+    // --- scheduledFirePpq: floored at closure time for a short holdBars -----
+    // Regression test for the real live bug ("first note fires almost
+    // together with the second" at Hold Bars=1): with a short holdBars
+    // (comparable to or shorter than the rest needed to even detect
+    // closure), phraseEnd + holdBars*bar could land BEFORE the phrase is
+    // actually known to be closed - an echo can never start before its own
+    // source material exists.
+    {
+        odly::Phrase p;
+        p.notes.push_back (makeNote (0.0, 0.5, 60));   // phraseEndPpq = 0.5
+        // 1 bar of 4/4 = 4 beats -> naive target = 0.5+4 = 4.5, but closure
+        // itself doesn't happen until ppq 6.0 here (e.g. a large
+        // phraseGapBeats) - scheduledFirePpq must never be earlier than that.
+        odly::closePhrase (p, 1, 4.0, 6.0);
+        check (std::abs (p.scheduledFirePpq - 6.0) < 1e-9,
+              "scheduledFirePpq: floored at the closure-time ppq when phraseEnd+holdBars*bar would be earlier");
     }
 
     // --- Transpose clamping at both ends -------------------------------------
