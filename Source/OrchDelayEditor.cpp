@@ -15,7 +15,7 @@ namespace
 OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
-    setSize (520, 780);
+    setSize (520, 800);
 
     titleLabel.setText ("OrchDelay", juce::dontSendNotification);
     titleLabel.setJustificationType (juce::Justification::centred);
@@ -231,7 +231,7 @@ void OrchDelayAudioProcessorEditor::resized()
     instanceSeedSlider.setBounds (seedRow);
     area.removeFromTop (12);
 
-    statusLabel.setBounds (row (36));
+    statusLabel.setBounds (row (52));
 }
 
 void OrchDelayAudioProcessorEditor::timerCallback()
@@ -259,6 +259,9 @@ void OrchDelayAudioProcessorEditor::timerCallback()
                          juce::String (audioProcessor.rewindDetectedForUi()) + " rwAct " +
                          juce::String (audioProcessor.rewindActedForUi()) + "\nsched " +
                          juce::String (audioProcessor.lastScheduledFirePpqForUi(), 2) + "  reached " +
-                         juce::String (audioProcessor.furthestBlockPpqForUi(), 2),
+                         juce::String (audioProcessor.furthestBlockPpqForUi(), 2) + "\nchoice " +
+                         juce::String (audioProcessor.lastManualChoiceForUi()) + " xform " +
+                         juce::String (audioProcessor.lastChosenTransformForUi()) + " stretch% " +
+                         juce::String (audioProcessor.lastResolvedStretchPercentForUi(), 1),
                          juce::dontSendNotification);
 }

@@ -58,6 +58,9 @@ public:
     int rewindActedForUi() const { return totalRewindActedUi.load(); }
     double lastScheduledFirePpqForUi() const { return lastScheduledFirePpqUi.load(); }
     double furthestBlockPpqForUi() const { return furthestBlockPpqUi.load(); }
+    int lastChosenTransformForUi() const { return lastChosenTransformUi.load(); }
+    int lastManualChoiceForUi() const { return lastManualChoiceUi.load(); }
+    float lastResolvedStretchPercentForUi() const { return lastResolvedStretchPercentUi.load(); }
 
     // "Randomize" button target - writes through the normal parameter path
     // (undoable, saved in state), never a bare non-parameter side value.
@@ -96,6 +99,9 @@ private:
     std::atomic<int> totalRewindActedUi { 0 };      // `rewound && playing` - the purge actually ran
     std::atomic<double> lastScheduledFirePpqUi { -1.0 };   // most recent phrase's scheduledFirePpq
     std::atomic<double> furthestBlockPpqUi { -1.0 };       // furthest blockEndPpq ever seen while playing
+    std::atomic<int> lastChosenTransformUi { -1 };   // odly::TransformKind actually resolved last time
+    std::atomic<int> lastManualChoiceUi { -1 };      // raw manualTransform parameter value read last time
+    std::atomic<float> lastResolvedStretchPercentUi { -1.0f };   // actual stretch % passed to buildOutputNotes
 
     juce::int64 nextNoteSeq = 1;      // 0 never issued, matches OrchPiano's own convention
     int nextPhraseId = 0;

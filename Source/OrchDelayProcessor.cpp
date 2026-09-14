@@ -54,6 +54,9 @@ void OrchDelayAudioProcessor::prepareToPlay (double newSampleRate, int samplesPe
     totalRewindActedUi.store (0);
     lastScheduledFirePpqUi.store (-1.0);
     furthestBlockPpqUi.store (-1.0);
+    lastChosenTransformUi.store (-1);
+    lastManualChoiceUi.store (-1);
+    lastResolvedStretchPercentUi.store (-1.0f);
 }
 
 void OrchDelayAudioProcessor::releaseResources()
@@ -107,6 +110,9 @@ void OrchDelayAudioProcessor::resolveAndScheduleTransform (odly::Phrase& phrase,
         phrase.chosenTransform = proposal.applyAny ? proposal.transformKind : odly::kTransformNone;
     }
 
+    lastManualChoiceUi.store (manualChoice);
+    lastChosenTransformUi.store (phrase.chosenTransform);
+
     // Random modes: the passed-in/read parameter values become RANGE bounds
     // to draw from (symmetric for Transpose/Rotation, a ceiling for Length,
     // since Length has no negative/symmetric meaning) rather than literal
@@ -123,6 +129,7 @@ void OrchDelayAudioProcessor::resolveAndScheduleTransform (odly::Phrase& phrase,
     const float resolvedStretchPercent = stretchRandom
         ? odly::resolveRandomStretchPercent (instanceSeed, phraseCounter, stretchPercent)
         : stretchPercent;
+    lastResolvedStretchPercentUi.store (resolvedStretchPercent);
 
     // Built ONCE here, not re-derived at fire time - see odly::Phrase's own
     // doc comment for why bundling a phrase's notes into one block's
