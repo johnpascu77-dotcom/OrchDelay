@@ -429,6 +429,44 @@ int main()
         check (sawNegative && sawPositive, "resolveRandomTransposeSemitones: draws both negative and positive values across a sample");
     }
 
+    // --- resolveRandomRotationSteps: same shape as Transpose's, salt 4 ------
+    {
+        const int a = odly::resolveRandomRotationSteps (5, 3, 8);
+        const int b = odly::resolveRandomRotationSteps (5, 3, 8);
+        check (a == b, "resolveRandomRotationSteps: identical inputs always produce identical outputs (determinism)");
+        check (a >= -8 && a <= 8, "resolveRandomRotationSteps: result stays within [-range, +range]");
+        check (odly::resolveRandomRotationSteps (5, 3, 0) == 0,
+              "resolveRandomRotationSteps: a zero range always resolves to 0");
+
+        bool sawNegative = false, sawPositive = false;
+        for (int i = 0; i < 200; ++i)
+        {
+            const int v = odly::resolveRandomRotationSteps (5, i, 8);
+            if (v < 0) sawNegative = true;
+            if (v > 0) sawPositive = true;
+        }
+        check (sawNegative && sawPositive, "resolveRandomRotationSteps: draws both negative and positive values across a sample");
+    }
+
+    // --- resolveRandomLengthPercent: a CEILING bound, not symmetric ---------
+    {
+        const float a = odly::resolveRandomLengthPercent (5, 3, 80.0f);
+        const float b = odly::resolveRandomLengthPercent (5, 3, 80.0f);
+        check (std::abs (a - b) < 1e-6f, "resolveRandomLengthPercent: identical inputs always produce identical outputs (determinism)");
+        check (a >= 1.0f && a <= 80.0f, "resolveRandomLengthPercent: result stays within [1, ceiling]");
+        check (std::abs (odly::resolveRandomLengthPercent (5, 3, 1.0f) - 1.0f) < 1e-6f,
+              "resolveRandomLengthPercent: a ceiling of 1% always resolves to exactly 1%");
+
+        bool sawLow = false, sawHigh = false;
+        for (int i = 0; i < 200; ++i)
+        {
+            const float v = odly::resolveRandomLengthPercent (5, i, 100.0f);
+            if (v < 50.0f) sawLow = true;
+            if (v > 50.0f) sawHigh = true;
+        }
+        check (sawLow && sawHigh, "resolveRandomLengthPercent: spreads across the full range, not clustered at one end");
+    }
+
     std::cout << "-------------------------\n";
     if (failures == 0)
     {

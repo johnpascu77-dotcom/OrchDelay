@@ -74,7 +74,9 @@ private:
     std::atomic<float>* transposeSemitonesParameter = nullptr;
     std::atomic<float>* transposeRandomParameter = nullptr;
     std::atomic<float>* rotationStepsParameter = nullptr;
+    std::atomic<float>* rotationRandomParameter = nullptr;
     std::atomic<float>* lengthPercentParameter = nullptr;
+    std::atomic<float>* lengthRandomParameter = nullptr;
     std::atomic<float>* instanceSeedParameter = nullptr;
 
     double sampleRate = 44100.0;

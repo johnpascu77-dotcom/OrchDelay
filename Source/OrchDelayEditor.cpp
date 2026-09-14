@@ -102,10 +102,16 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     setupLabel (rotationLabel, "Rotation (steps)");
     addAndMakeVisible (rotationLabel);
     setupSlider (rotationSlider);
+    rotationRandomButton.setButtonText ("Random");
+    rotationRandomButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
+    addAndMakeVisible (rotationRandomButton);
 
     setupLabel (lengthLabel, "Length (%)");
     addAndMakeVisible (lengthLabel);
     setupSlider (lengthSlider);
+    lengthRandomButton.setButtonText ("Random");
+    lengthRandomButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
+    addAndMakeVisible (lengthRandomButton);
 
     setupLabel (instanceSeedLabel, "Instance Seed");
     addAndMakeVisible (instanceSeedLabel);
@@ -131,7 +137,9 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     transposeAttachment = std::make_unique<SliderAttachment> (state, "transposeSemitones", transposeSlider);
     transposeRandomAttachment = std::make_unique<ButtonAttachment> (state, "transposeRandom", transposeRandomButton);
     rotationAttachment = std::make_unique<SliderAttachment> (state, "rotationSteps", rotationSlider);
+    rotationRandomAttachment = std::make_unique<ButtonAttachment> (state, "rotationRandom", rotationRandomButton);
     lengthAttachment = std::make_unique<SliderAttachment> (state, "lengthPercent", lengthSlider);
+    lengthRandomAttachment = std::make_unique<ButtonAttachment> (state, "lengthRandom", lengthRandomButton);
     instanceSeedAttachment = std::make_unique<SliderAttachment> (state, "instanceSeed", instanceSeedSlider);
 
     startTimerHz (4);
@@ -186,11 +194,17 @@ void OrchDelayAudioProcessorEditor::resized()
     area.removeFromTop (8);
 
     rotationLabel.setBounds (row (18));
-    rotationSlider.setBounds (row());
+    auto rotationRow = row();
+    rotationRandomButton.setBounds (rotationRow.removeFromRight (90));
+    rotationRow.removeFromRight (8);
+    rotationSlider.setBounds (rotationRow);
     area.removeFromTop (8);
 
     lengthLabel.setBounds (row (18));
-    lengthSlider.setBounds (row());
+    auto lengthRow = row();
+    lengthRandomButton.setBounds (lengthRow.removeFromRight (90));
+    lengthRow.removeFromRight (8);
+    lengthSlider.setBounds (lengthRow);
     area.removeFromTop (8);
 
     instanceSeedLabel.setBounds (row (18));

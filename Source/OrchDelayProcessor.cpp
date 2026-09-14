@@ -23,7 +23,9 @@ OrchDelayAudioProcessor::OrchDelayAudioProcessor()
     transposeSemitonesParameter = parameters.getRawParameterValue ("transposeSemitones");
     transposeRandomParameter = parameters.getRawParameterValue ("transposeRandom");
     rotationStepsParameter = parameters.getRawParameterValue ("rotationSteps");
+    rotationRandomParameter = parameters.getRawParameterValue ("rotationRandom");
     lengthPercentParameter = parameters.getRawParameterValue ("lengthPercent");
+    lengthRandomParameter = parameters.getRawParameterValue ("lengthRandom");
     instanceSeedParameter = parameters.getRawParameterValue ("instanceSeed");
 }
 
@@ -81,6 +83,8 @@ void OrchDelayAudioProcessor::resolveAndScheduleTransform (odly::Phrase& phrase,
     const int instanceSeed = instanceSeedParameter != nullptr
         ? juce::jlimit (0, 127, juce::roundToInt (instanceSeedParameter->load())) : 0;
     const bool transposeRandom = transposeRandomParameter != nullptr && transposeRandomParameter->load() >= 0.5f;
+    const bool rotationRandom = rotationRandomParameter != nullptr && rotationRandomParameter->load() >= 0.5f;
+    const bool lengthRandom = lengthRandomParameter != nullptr && lengthRandomParameter->load() >= 0.5f;
     const int rotationSteps = rotationStepsParameter != nullptr
         ? juce::roundToInt (rotationStepsParameter->load()) : 0;
     const float lengthPercent = lengthPercentParameter != nullptr
@@ -98,17 +102,25 @@ void OrchDelayAudioProcessor::resolveAndScheduleTransform (odly::Phrase& phrase,
         phrase.chosenTransform = proposal.applyAny ? proposal.transformKind : odly::kTransformNone;
     }
 
-    // Random Transpose mode: the passed-in transposeSemitones becomes the
-    // symmetric RANGE bound to draw from, rather than the literal amount -
-    // see odly::resolveRandomTransposeSemitones's own doc comment.
+    // Random modes: the passed-in/read parameter values become RANGE bounds
+    // to draw from (symmetric for Transpose/Rotation, a ceiling for Length,
+    // since Length has no negative/symmetric meaning) rather than literal
+    // amounts - see each resolveRandom*'s own doc comment.
     const int resolvedTransposeSemitones = transposeRandom
         ? odly::resolveRandomTransposeSemitones (instanceSeed, phraseCounter, transposeSemitones)
         : transposeSemitones;
+    const int resolvedRotationSteps = rotationRandom
+        ? odly::resolveRandomRotationSteps (instanceSeed, phraseCounter, rotationSteps)
+        : rotationSteps;
+    const float resolvedLengthPercent = lengthRandom
+        ? odly::resolveRandomLengthPercent (instanceSeed, phraseCounter, lengthPercent)
+        : lengthPercent;
 
     // Built ONCE here, not re-derived at fire time - see odly::Phrase's own
     // doc comment for why bundling a phrase's notes into one block's
     // emission (the old approach) was a real bug.
-    phrase.outputNotes = odly::buildOutputNotes (phrase, resolvedTransposeSemitones, rotationSteps, lengthPercent);
+    phrase.outputNotes = odly::buildOutputNotes (phrase, resolvedTransposeSemitones,
+                                                 resolvedRotationSteps, resolvedLengthPercent);
 }
 
 void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
@@ -603,6 +615,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::cre
         "Rotation (steps)",
         -16, 16, 1));
 
+    // When on, drawn per phrase from [-|Rotation|, +|Rotation|] instead of
+    // the fixed value - see odly::resolveRandomRotationSteps.
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "rotationRandom", 1 },
+        "Random Rotation",
+        false));
+
     // How much of the captured phrase (by note count, first-to-last) actually
     // gets echoed - see odly::applyLength. 100% = the whole phrase, matching
     // every other transform's own "no shortening" baseline.
@@ -621,6 +640,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::cre
             {
                 return text.retainCharacters ("0123456789.").getFloatValue();
             })));
+
+    // When on, drawn per phrase from [1%, Length%] instead of the fixed
+    // value - Length has no negative/symmetric meaning, so the slider
+    // becomes a ceiling here, not a symmetric bound - see
+    // odly::resolveRandomLengthPercent.
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "lengthRandom", 1 },
+        "Random Length",
+        false));
 
     // This instance's own hash key for the restlessness proposal (see
     // odly::proposeTransform / fnv1aHash) - gives multiple OrchDelay

@@ -316,4 +316,26 @@ namespace odly
         const int offset = juce::jlimit (0, span - 1, static_cast<int> (unit * static_cast<float> (span)));
         return -bound + offset;
     }
+
+    int resolveRandomRotationSteps (int instanceSeed, int phraseCounter, int rangeSteps)
+    {
+        const int bound = rangeSteps < 0 ? -rangeSteps : rangeSteps;
+        if (bound == 0)
+            return 0;
+
+        const float unit = hashUnit (instanceSeed, phraseCounter, 4);   // salt 4
+        const int span = 2 * bound + 1;
+        const int offset = juce::jlimit (0, span - 1, static_cast<int> (unit * static_cast<float> (span)));
+        return -bound + offset;
+    }
+
+    float resolveRandomLengthPercent (int instanceSeed, int phraseCounter, float ceilingPercent)
+    {
+        const float ceiling = juce::jlimit (1.0f, 100.0f, ceilingPercent);
+        if (ceiling <= 1.0f)
+            return 1.0f;
+
+        const float unit = hashUnit (instanceSeed, phraseCounter, 5);   // salt 5
+        return juce::jlimit (1.0f, 100.0f, 1.0f + unit * (ceiling - 1.0f));
+    }
 }

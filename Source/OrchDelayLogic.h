@@ -293,6 +293,18 @@ namespace odly
     // from).
     int resolveRandomTransposeSemitones (int instanceSeed, int phraseCounter, int rangeSemitones);
 
+    // Same idea as resolveRandomTransposeSemitones, for Rotation - the
+    // Rotation (steps) slider becomes a symmetric range bound
+    // [-|rangeSteps|, +|rangeSteps|] when Random Rotation is on. Salt 4,
+    // independent of every other seeded draw in this file.
+    int resolveRandomRotationSteps (int instanceSeed, int phraseCounter, int rangeSteps);
+
+    // Same idea again, for Length - but Length has no negative/symmetric
+    // meaning (it's always a 0-100% fraction of the phrase), so the Length
+    // (%) slider becomes a CEILING instead: drawn uniformly from
+    // [1, ceilingPercent]. Salt 5.
+    float resolveRandomLengthPercent (int instanceSeed, int phraseCounter, float ceilingPercent);
+
     // --- Stuck-note-cleanup discipline (see Docs SS2) -----------------------
     // A single note-off "occurrence" this OrchDelay instance owes the output
     // for something it fired earlier, tracked by seq so an overlapping
