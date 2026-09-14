@@ -256,5 +256,23 @@ throughout a stop, so a genuine resume-from-an-earlier-point is still caught cor
 `playing` goes true again - this fix only changes behavior for a jump detected while stopped, which
 previously purged for no operational reason (nothing was going to fire while stopped anyway).
 
-Live-tested after this fix: pending. If the counters next show `closed 1, fired 1` after a normal
-play/stop cycle, this closes out the SS9/SS10/SS11 arc. Rebuilt + reinstalled VST3, Build ~17:17 UTC.
+**Fourth live test, same session**: the `playing`-gated rewind fix did NOT resolve it - identical
+signature recurred (`captured 4, closed 1, fired 0, pending 0`) from a single clean stop with no other
+transport action, confirmed by the user directly ("no stop was involved [before]. Only then I hit
+stop"). Re-examining `stoppedPlaying` found the real bug was simpler and in a different line entirely:
+it unconditionally cleared `pendingPhrases` at its own top (the original v1 "discard anything mid-hold
+at stop" policy), UNCHANGED by the SS10/SS11 fixes. If the host ever reports `isPlaying()` flipping
+more than once for what is really one stop gesture - plausible, unconfirmed, now instrumented via a
+new `totalStopEventsUi` counter - each extra `stoppedPlaying` transition would silently wipe out the
+very phrase the first one had just closed and scheduled, before anything could observe or fire it.
+
+**Fix**: removed the clear entirely. `stoppedPlaying` now only ever closes the still-open phrase (a
+safe no-op once it's already empty, including on a repeated/glitchy transition) - it no longer touches
+`pendingPhrases` at all. The only remaining purge path is the genuine `rewound && playing` case. This
+retroactively obsoletes the original SS2 "discard mid-hold at stop" policy entirely, not just for the
+still-open phrase (SS10) - there was never a real need to discard ALREADY-scheduled material either,
+once firing was already deferred to the normal schedule rather than forced immediately.
+
+Added 3 more counters (`stopEventsForUi`/`rewindDetectedForUi`/`rewindActedForUi`) so the next test, if
+this still doesn't resolve it, will be immediately conclusive rather than another guess. Rebuilt +
+reinstalled, Build ~17:23 UTC. Live-retest pending.
