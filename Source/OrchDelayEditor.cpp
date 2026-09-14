@@ -15,7 +15,7 @@ namespace
 OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
-    setSize (520, 720);
+    setSize (520, 780);
 
     titleLabel.setText ("OrchDelay", juce::dontSendNotification);
     titleLabel.setJustificationType (juce::Justification::centred);
@@ -84,6 +84,7 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     transformBox.addItem ("Rotation", 6);
     transformBox.addItem ("Length", 7);
     transformBox.addItem ("M7", 8);
+    transformBox.addItem ("Stretch", 9);
     transformBox.setColour (juce::ComboBox::backgroundColourId, kBoxBackground);
     transformBox.setColour (juce::ComboBox::textColourId, juce::Colours::white);
     transformBox.setColour (juce::ComboBox::outlineColourId, kOutline);
@@ -113,6 +114,13 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     lengthRandomButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
     addAndMakeVisible (lengthRandomButton);
 
+    setupLabel (stretchLabel, "Stretch (%)");
+    addAndMakeVisible (stretchLabel);
+    setupSlider (stretchSlider);
+    stretchRandomButton.setButtonText ("Random");
+    stretchRandomButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
+    addAndMakeVisible (stretchRandomButton);
+
     setupLabel (instanceSeedLabel, "Instance Seed");
     addAndMakeVisible (instanceSeedLabel);
     setupSlider (instanceSeedSlider);
@@ -140,6 +148,8 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     rotationRandomAttachment = std::make_unique<ButtonAttachment> (state, "rotationRandom", rotationRandomButton);
     lengthAttachment = std::make_unique<SliderAttachment> (state, "lengthPercent", lengthSlider);
     lengthRandomAttachment = std::make_unique<ButtonAttachment> (state, "lengthRandom", lengthRandomButton);
+    stretchAttachment = std::make_unique<SliderAttachment> (state, "stretchPercent", stretchSlider);
+    stretchRandomAttachment = std::make_unique<ButtonAttachment> (state, "stretchRandom", stretchRandomButton);
     instanceSeedAttachment = std::make_unique<SliderAttachment> (state, "instanceSeed", instanceSeedSlider);
 
     startTimerHz (4);
@@ -205,6 +215,13 @@ void OrchDelayAudioProcessorEditor::resized()
     lengthRandomButton.setBounds (lengthRow.removeFromRight (90));
     lengthRow.removeFromRight (8);
     lengthSlider.setBounds (lengthRow);
+    area.removeFromTop (8);
+
+    stretchLabel.setBounds (row (18));
+    auto stretchRow = row();
+    stretchRandomButton.setBounds (stretchRow.removeFromRight (90));
+    stretchRow.removeFromRight (8);
+    stretchSlider.setBounds (stretchRow);
     area.removeFromTop (8);
 
     instanceSeedLabel.setBounds (row (18));

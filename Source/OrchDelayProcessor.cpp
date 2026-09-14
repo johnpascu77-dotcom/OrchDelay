@@ -26,6 +26,8 @@ OrchDelayAudioProcessor::OrchDelayAudioProcessor()
     rotationRandomParameter = parameters.getRawParameterValue ("rotationRandom");
     lengthPercentParameter = parameters.getRawParameterValue ("lengthPercent");
     lengthRandomParameter = parameters.getRawParameterValue ("lengthRandom");
+    stretchPercentParameter = parameters.getRawParameterValue ("stretchPercent");
+    stretchRandomParameter = parameters.getRawParameterValue ("stretchRandom");
     instanceSeedParameter = parameters.getRawParameterValue ("instanceSeed");
 }
 
@@ -85,10 +87,13 @@ void OrchDelayAudioProcessor::resolveAndScheduleTransform (odly::Phrase& phrase,
     const bool transposeRandom = transposeRandomParameter != nullptr && transposeRandomParameter->load() >= 0.5f;
     const bool rotationRandom = rotationRandomParameter != nullptr && rotationRandomParameter->load() >= 0.5f;
     const bool lengthRandom = lengthRandomParameter != nullptr && lengthRandomParameter->load() >= 0.5f;
+    const bool stretchRandom = stretchRandomParameter != nullptr && stretchRandomParameter->load() >= 0.5f;
     const int rotationSteps = rotationStepsParameter != nullptr
         ? juce::roundToInt (rotationStepsParameter->load()) : 0;
     const float lengthPercent = lengthPercentParameter != nullptr
         ? juce::jlimit (0.0f, 100.0f, lengthPercentParameter->load()) : 100.0f;
+    const float stretchPercent = stretchPercentParameter != nullptr
+        ? juce::jlimit (25.0f, 400.0f, stretchPercentParameter->load()) : 100.0f;
 
     // Choice indices: 0=Follow Restlessness, 1=None, 2=Transpose, 3=Retrograde,
     // 4=Inversion, 5=Rotation, 6=Length, 7=M7 - any explicit choice (>0)
@@ -115,12 +120,16 @@ void OrchDelayAudioProcessor::resolveAndScheduleTransform (odly::Phrase& phrase,
     const float resolvedLengthPercent = lengthRandom
         ? odly::resolveRandomLengthPercent (instanceSeed, phraseCounter, lengthPercent)
         : lengthPercent;
+    const float resolvedStretchPercent = stretchRandom
+        ? odly::resolveRandomStretchPercent (instanceSeed, phraseCounter, stretchPercent)
+        : stretchPercent;
 
     // Built ONCE here, not re-derived at fire time - see odly::Phrase's own
     // doc comment for why bundling a phrase's notes into one block's
     // emission (the old approach) was a real bug.
     phrase.outputNotes = odly::buildOutputNotes (phrase, resolvedTransposeSemitones,
-                                                 resolvedRotationSteps, resolvedLengthPercent);
+                                                 resolvedRotationSteps, resolvedLengthPercent,
+                                                 resolvedStretchPercent);
 }
 
 void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
@@ -588,7 +597,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::cre
         juce::ParameterID { "manualTransform", 1 },
         "Transform",
         juce::StringArray { "Follow Restlessness", "None", "Transpose", "Retrograde", "Inversion",
-                            "Rotation", "Length", "M7" },
+                            "Rotation", "Length", "M7", "Stretch" },
         0));
 
     params.push_back (std::make_unique<juce::AudioParameterInt> (
@@ -648,6 +657,36 @@ juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::cre
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "lengthRandom", 1 },
         "Random Length",
+        false));
+
+    // Proportional time-stretch of the echoed phrase - see odly::applyStretch.
+    // 100% = unchanged; not achievable as a live, per-echo, potentially-
+    // randomized effect via a static Bitwig clip edit (the user's own point
+    // in proposing this transform).
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "stretchPercent", 1 },
+        "Stretch (%)",
+        juce::NormalisableRange<float> (25.0f, 400.0f, 1.0f),
+        100.0f,
+        juce::AudioParameterFloatAttributes()
+            .withLabel ("%")
+            .withStringFromValueFunction ([] (float value, int)
+            {
+                return juce::String (juce::roundToInt (value)) + "%";
+            })
+            .withValueFromStringFunction ([] (const juce::String& text)
+            {
+                return text.retainCharacters ("0123456789.").getFloatValue();
+            })));
+
+    // When on, drawn per phrase from [100%, Stretch%] (whichever side of
+    // 100 the slider sits on) instead of the fixed value - Stretch's
+    // neutral point is 100%, not 0, so this isn't a symmetric bound like
+    // Transpose/Rotation's own Random modes - see
+    // odly::resolveRandomStretchPercent.
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "stretchRandom", 1 },
+        "Random Stretch",
         false));
 
     // This instance's own hash key for the restlessness proposal (see

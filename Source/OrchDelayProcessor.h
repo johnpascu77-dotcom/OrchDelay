@@ -77,6 +77,8 @@ private:
     std::atomic<float>* rotationRandomParameter = nullptr;
     std::atomic<float>* lengthPercentParameter = nullptr;
     std::atomic<float>* lengthRandomParameter = nullptr;
+    std::atomic<float>* stretchPercentParameter = nullptr;
+    std::atomic<float>* stretchRandomParameter = nullptr;
     std::atomic<float>* instanceSeedParameter = nullptr;
 
     double sampleRate = 44100.0;

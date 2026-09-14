@@ -224,9 +224,25 @@ namespace odly
         return out;
     }
 
+    std::vector<HeldNote> applyStretch (const std::vector<HeldNote>& notes, double phraseStartPpq,
+                                        float stretchPercent)
+    {
+        std::vector<HeldNote> out = notes;
+        const double factor = static_cast<double> (juce::jlimit (25.0f, 400.0f, stretchPercent)) / 100.0;
+
+        for (auto& n : out)
+        {
+            const double relativeOnset = n.onsetPpq - phraseStartPpq;
+            n.onsetPpq = phraseStartPpq + relativeOnset * factor;
+            n.durationPpq = juce::jmax (0.0, n.durationPpq * factor);
+        }
+
+        return out;
+    }
+
     std::vector<HeldNote> applyTransform (const std::vector<HeldNote>& notes, int transformKind,
                                           double phraseStartPpq, double phraseEndPpq, int transposeSemitones,
-                                          int rotationSteps, float lengthPercent)
+                                          int rotationSteps, float lengthPercent, float stretchPercent)
     {
         switch (transformKind)
         {
@@ -236,17 +252,19 @@ namespace odly
             case kTransformRotation:   return applyRotation (notes, rotationSteps);
             case kTransformLength:     return applyLength (notes, lengthPercent);
             case kTransformM7:         return applyM7 (notes);
+            case kTransformStretch:    return applyStretch (notes, phraseStartPpq, stretchPercent);
             case kTransformNone:
             default:                   return notes;
         }
     }
 
     std::vector<ScheduledNote> buildOutputNotes (const Phrase& phrase, int transposeSemitones,
-                                                 int rotationSteps, float lengthPercent)
+                                                 int rotationSteps, float lengthPercent, float stretchPercent)
     {
         const auto transformed = applyTransform (phrase.notes, phrase.chosenTransform,
                                                   phrase.phraseStartPpq, phrase.phraseEndPpq,
-                                                  transposeSemitones, rotationSteps, lengthPercent);
+                                                  transposeSemitones, rotationSteps, lengthPercent,
+                                                  stretchPercent);
 
         std::vector<ScheduledNote> out;
         out.reserve (transformed.size());
@@ -300,8 +318,8 @@ namespace odly
             return proposal;
 
         const juce::uint32 h = fnv1aHash (instanceSeed, phraseCounter, 2);
-        // 1=Transpose,2=Retrograde,3=Inversion,4=Rotation,5=Length,6=M7
-        proposal.transformKind = 1 + static_cast<int> (h % 6u);
+        // 1=Transpose,2=Retrograde,3=Inversion,4=Rotation,5=Length,6=M7,7=Stretch
+        proposal.transformKind = 1 + static_cast<int> (h % 7u);
         return proposal;
     }
 
@@ -337,5 +355,18 @@ namespace odly
 
         const float unit = hashUnit (instanceSeed, phraseCounter, 5);   // salt 5
         return juce::jlimit (1.0f, 100.0f, 1.0f + unit * (ceiling - 1.0f));
+    }
+
+    float resolveRandomStretchPercent (int instanceSeed, int phraseCounter, float boundPercent)
+    {
+        const float bound = juce::jlimit (25.0f, 400.0f, boundPercent);
+        const float diff = bound > 100.0f ? (bound - 100.0f) : (100.0f - bound);
+        if (diff < 1e-6f)
+            return 100.0f;
+
+        const float lo = juce::jmin (100.0f, bound);
+        const float hi = juce::jmax (100.0f, bound);
+        const float unit = hashUnit (instanceSeed, phraseCounter, 6);   // salt 6
+        return lo + unit * (hi - lo);
     }
 }

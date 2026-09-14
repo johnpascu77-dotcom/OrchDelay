@@ -298,7 +298,7 @@ int main()
         p.notes.push_back (makeNote (2.0, 0.95, 64));
         p.notes.push_back (makeNote (3.0, 0.95, 65));
 
-        auto out = odly::buildOutputNotes (p, 0, 0, 100.0f);
+        auto out = odly::buildOutputNotes (p, 0, 0, 100.0f, 100.0f);
         check (out.size() == 4, "buildOutputNotes: same note count as the phrase");
         // Each note's own output onset = scheduledFirePpq + (its own onset - phraseStart) -
         // NOT all collapsed onto scheduledFirePpq itself.
@@ -373,40 +373,77 @@ int main()
               "M7: applying it twice is a no-op (M7 is its own inverse, 7*7 mod 12 == 1) - matches MPL's own convention");
     }
 
+    // --- applyStretch: proportional rescale around the phrase's own start ---
+    {
+        // Phrase spans [0,4): onsets 0,1,2,3, each 0.9 beats long.
+        std::vector<odly::HeldNote> notes {
+            makeNote (0.0, 0.9, 60), makeNote (1.0, 0.9, 62), makeNote (2.0, 0.9, 64), makeNote (3.0, 0.9, 65)
+        };
+        auto out100 = odly::applyStretch (notes, 0.0, 100.0f);
+        check (std::abs (out100[1].onsetPpq - 1.0) < 1e-9 && std::abs (out100[1].durationPpq - 0.9) < 1e-9,
+              "stretch: 100% leaves onsets and durations unchanged");
+
+        auto out50 = odly::applyStretch (notes, 0.0, 50.0f);
+        check (std::abs (out50[0].onsetPpq - 0.0) < 1e-9,
+              "stretch: the phrase's own first note (at phraseStart) never moves, regardless of factor");
+        check (std::abs (out50[1].onsetPpq - 0.5) < 1e-9 && std::abs (out50[1].durationPpq - 0.45) < 1e-9,
+              "stretch: 50% halves both each note's offset from phraseStart AND its own duration");
+        check (std::abs (out50[3].onsetPpq - 1.5) < 1e-9, "stretch: 50% compresses the whole phrase into half the time");
+
+        auto out200 = odly::applyStretch (notes, 0.0, 200.0f);
+        check (std::abs (out200[3].onsetPpq - 6.0) < 1e-9,
+              "stretch: 200% doubles the whole phrase's span - the last note now lands twice as far out");
+
+        // Rescale is relative to phraseStartPpq, not absolute ppq zero.
+        std::vector<odly::HeldNote> notesAt10 {
+            makeNote (10.0, 0.9, 60), makeNote (11.0, 0.9, 62), makeNote (12.0, 0.9, 64), makeNote (13.0, 0.9, 65)
+        };
+        auto outOffset = odly::applyStretch (notesAt10, 10.0, 50.0f);
+        check (std::abs (outOffset[1].onsetPpq - 10.5) < 1e-9,
+              "stretch: rescales relative to the phrase's OWN start (10.0 here), not absolute ppq zero");
+
+        // Out-of-range factors are clamped, not left to produce nonsense.
+        auto outClampHigh = odly::applyStretch (notes, 0.0, 1000.0f);
+        check (std::abs (outClampHigh[3].onsetPpq - (3.0 * 4.0)) < 1e-9,
+              "stretch: factor is clamped to the documented [25%,400%] range");
+    }
+
     // --- applyTransform dispatch ----------------------------------------------
     {
         std::vector<odly::HeldNote> notes {
             makeNote (0.0, 1.0, 60), makeNote (1.0, 1.0, 64), makeNote (2.0, 1.0, 67), makeNote (3.0, 1.0, 60)
         };
-        auto same = odly::applyTransform (notes, odly::kTransformNone, 0.0, 4.0, 12, 0, 100.0f);
+        auto same = odly::applyTransform (notes, odly::kTransformNone, 0.0, 4.0, 12, 0, 100.0f, 100.0f);
         check (same[0].pitch == 60, "applyTransform: kTransformNone returns input unchanged");
-        auto up = odly::applyTransform (notes, odly::kTransformTranspose, 0.0, 4.0, 12, 0, 100.0f);
+        auto up = odly::applyTransform (notes, odly::kTransformTranspose, 0.0, 4.0, 12, 0, 100.0f, 100.0f);
         check (up[0].pitch == 72, "applyTransform: dispatches to Transpose correctly");
-        auto rot = odly::applyTransform (notes, odly::kTransformRotation, 0.0, 4.0, 12, 1, 100.0f);
+        auto rot = odly::applyTransform (notes, odly::kTransformRotation, 0.0, 4.0, 12, 1, 100.0f, 100.0f);
         check (rot[0].pitch == 60 && rot[1].pitch == 60, "applyTransform: dispatches to Rotation correctly");
-        auto len = odly::applyTransform (notes, odly::kTransformLength, 0.0, 4.0, 12, 0, 50.0f);
+        auto len = odly::applyTransform (notes, odly::kTransformLength, 0.0, 4.0, 12, 0, 50.0f, 100.0f);
         check (len.size() == 2, "applyTransform: dispatches to Length correctly");
-        auto m7 = odly::applyTransform (notes, odly::kTransformM7, 0.0, 4.0, 12, 0, 100.0f);
+        auto m7 = odly::applyTransform (notes, odly::kTransformM7, 0.0, 4.0, 12, 0, 100.0f, 100.0f);
         check (m7[0].pitch == 60, "applyTransform: dispatches to M7 correctly");
+        auto stretch = odly::applyTransform (notes, odly::kTransformStretch, 0.0, 4.0, 12, 0, 100.0f, 200.0f);
+        check (std::abs (stretch[1].onsetPpq - 2.0) < 1e-9, "applyTransform: dispatches to Stretch correctly");
     }
 
-    // --- proposeTransform: 6-way pick now covers the full vocabulary --------
+    // --- proposeTransform: 7-way pick now covers the full vocabulary --------
     {
-        int seenKinds[7] = { 0 };   // index 0 unused (kTransformNone never proposed when applyAny)
+        int seenKinds[8] = { 0 };   // index 0 unused (kTransformNone never proposed when applyAny)
         bool everyPickInRange = true;
         for (int i = 0; i < 4000; ++i)
         {
             auto p = odly::proposeTransform (99, i, 1.0f);   // restlessness=1 -> always proposes
-            if (p.transformKind < odly::kTransformTranspose || p.transformKind > odly::kTransformM7)
+            if (p.transformKind < odly::kTransformTranspose || p.transformKind > odly::kTransformStretch)
                 everyPickInRange = false;
             seenKinds[p.transformKind]++;
         }
-        check (everyPickInRange, "proposeTransform: always picks one of the 6 real transforms, never None, at restlessness=1");
+        check (everyPickInRange, "proposeTransform: always picks one of the 7 real transforms, never None, at restlessness=1");
 
         bool allSeen = true;
-        for (int k = odly::kTransformTranspose; k <= odly::kTransformM7; ++k)
+        for (int k = odly::kTransformTranspose; k <= odly::kTransformStretch; ++k)
             if (seenKinds[k] == 0) allSeen = false;
-        check (allSeen, "proposeTransform: all 6 transforms (including the newly-added Rotation/Length/M7) get picked across a large sample");
+        check (allSeen, "proposeTransform: all 7 transforms (including the newly-added Stretch) get picked across a large sample");
     }
 
     // --- resolveRandomTransposeSemitones: deterministic, ranged, symmetric ---
@@ -465,6 +502,20 @@ int main()
             if (v > 50.0f) sawHigh = true;
         }
         check (sawLow && sawHigh, "resolveRandomLengthPercent: spreads across the full range, not clustered at one end");
+    }
+
+    // --- resolveRandomStretchPercent: neutral point is 100%, not 0 ----------
+    {
+        const float a = odly::resolveRandomStretchPercent (5, 3, 200.0f);
+        const float b = odly::resolveRandomStretchPercent (5, 3, 200.0f);
+        check (std::abs (a - b) < 1e-6f, "resolveRandomStretchPercent: identical inputs always produce identical outputs (determinism)");
+        check (a >= 100.0f && a <= 200.0f, "resolveRandomStretchPercent: a bound ABOVE 100 draws only slower/longer values, never below 100");
+
+        const float c = odly::resolveRandomStretchPercent (5, 3, 50.0f);
+        check (c >= 50.0f && c <= 100.0f, "resolveRandomStretchPercent: a bound BELOW 100 draws only faster/shorter values, never above 100");
+
+        check (std::abs (odly::resolveRandomStretchPercent (5, 3, 100.0f) - 100.0f) < 1e-6f,
+              "resolveRandomStretchPercent: a bound of exactly 100% always resolves to 100% (no range)");
     }
 
     std::cout << "-------------------------\n";

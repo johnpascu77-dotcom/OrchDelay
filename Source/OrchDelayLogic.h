@@ -84,7 +84,8 @@ namespace odly
         kTransformInversion = 3,
         kTransformRotation = 4,
         kTransformLength = 5,
-        kTransformM7 = 6
+        kTransformM7 = 6,
+        kTransformStretch = 7
     };
 
     // A note-on/note-off/note-off-with-no-velocity event, the raw input this
@@ -233,11 +234,27 @@ namespace odly
     // grid dependency - the one v1.1 transform that ports over unchanged.
     std::vector<HeldNote> applyM7 (const std::vector<HeldNote>& notes);
 
+    // Proportional time-stretch: rescales every note's onset (relative to
+    // the phrase's OWN start) and duration by `stretchPercent/100` -
+    // 100% = unchanged, <100% = the echo plays back faster/shorter,
+    // >100% = slower/longer, while every note's RELATIVE rhythmic position
+    // within the phrase is preserved exactly (a straight proportional
+    // rescale, not a per-note offset). No precedent in MPL to port from -
+    // MPL's own patterns are locked to their host's fixed BPM/step grid,
+    // with nothing to stretch; this only exists because OrchDelay owns real
+    // timestamped material it can freely rescale before re-emitting it.
+    // Composes naturally with the existing schedule-time math in
+    // buildOutputNotes, which only ever looks at each note's offset from
+    // phraseStartPpq - a stretched offset lands correctly with no special
+    // casing needed there.
+    std::vector<HeldNote> applyStretch (const std::vector<HeldNote>& notes, double phraseStartPpq,
+                                        float stretchPercent);
+
     // Dispatches to the right transform above by `TransformKind`; kTransformNone
     // returns the input unchanged (a plain copy).
     std::vector<HeldNote> applyTransform (const std::vector<HeldNote>& notes, int transformKind,
                                           double phraseStartPpq, double phraseEndPpq, int transposeSemitones,
-                                          int rotationSteps, float lengthPercent);
+                                          int rotationSteps, float lengthPercent, float stretchPercent);
 
     // Resolves `phrase`'s chosen transform AND the schedule-time shift
     // (scheduledFirePpq relative to phraseStartPpq) into a list of
@@ -249,7 +266,7 @@ namespace odly
     // phrase's notes into a single block's emission (see Phrase's own doc
     // comment for why that used to be a real bug).
     std::vector<ScheduledNote> buildOutputNotes (const Phrase& phrase, int transposeSemitones,
-                                                 int rotationSteps, float lengthPercent);
+                                                 int rotationSteps, float lengthPercent, float stretchPercent);
 
     // --- Restlessness-driven transform proposal -----------------------------
     // A stateless FNV-1a-style hash (byte-for-byte port of OrchGate's own
@@ -271,10 +288,11 @@ namespace odly
 
     // restlessness (0..1) IS the probability of proposing a non-verbatim
     // transform for this phrase - at 0, always verbatim; at 1, always
-    // transforms. If applyAny, an equal-weight 6-way pick among the full
+    // transforms. If applyAny, an equal-weight 7-way pick among the full
     // transform vocabulary - Transpose/Retrograde/Inversion/Rotation/
-    // Length/M7 (no evidence yet to favor one - see Docs SS7; extended from
-    // 3-way to 6-way when Rotation/Length/M7 were added).
+    // Length/M7/Stretch (no evidence yet to favor one - see Docs SS7;
+    // extended 3-way -> 6-way -> 7-way as Rotation/Length/M7, then Stretch,
+    // were added).
     // `instanceSeed`: this OrchDelay instance's own identity (0-127 param).
     // `phraseCounter`: increments once per phrase closure - takes the role
     // OrchGate's broadcast "mode" CC plays, since v1 has no OrchConductor
@@ -304,6 +322,15 @@ namespace odly
     // (%) slider becomes a CEILING instead: drawn uniformly from
     // [1, ceilingPercent]. Salt 5.
     float resolveRandomLengthPercent (int instanceSeed, int phraseCounter, float ceilingPercent);
+
+    // Stretch's neutral point is 100% (unchanged), not 0 - so unlike
+    // Transpose/Rotation's symmetric-around-0 bound, this draws uniformly
+    // between 100% and `boundPercent`, whichever side of 100 that bound
+    // falls on setting the direction (a bound of 200% wanders slower/
+    // longer only, never faster; a bound of 50% wanders faster/shorter
+    // only). boundPercent==100 always resolves to exactly 100 (no range).
+    // Salt 6.
+    float resolveRandomStretchPercent (int instanceSeed, int phraseCounter, float boundPercent);
 
     // --- Stuck-note-cleanup discipline (see Docs SS2) -----------------------
     // A single note-off "occurrence" this OrchDelay instance owes the output

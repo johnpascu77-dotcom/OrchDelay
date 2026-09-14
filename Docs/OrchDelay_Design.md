@@ -413,6 +413,52 @@ onsets unchanged, 0-steps no-op, full-wrap no-op, single-note no-op), `applyLeng
 empty), `applyM7` (fixed point at pitch class 0, octave-preserving mapping, self-inverse round-trip),
 `applyTransform` dispatch for all 3 new kinds, `proposeTransform`'s 6-way coverage (every kind gets
 picked across a large sample), and `resolveRandomTransposeSemitones` (determinism, range bound, zero-
-range collapses to 0, both signs appear across a sample). Rebuilt + reinstalled, Build ~19:43 UTC.
-**Not yet live-tested** - required before calling v1.1 actually done, per this repo's own established
-discipline.
+range collapses to 0, both signs appear across a sample).
+
+**RESOLVED**: live-tested successfully, including with polyphonic material (not just single-line
+phrases) - unplanned but welcome validation that the note-list-based transform math generalizes fine
+beyond the monophonic case it was designed against. User asked one follow-up about Length's
+percentage semantics (worried intermediate values might produce awkward-to-quantize rhythms) -
+clarified that Length only truncates NOTE COUNT, never rescales timing, so surviving notes keep their
+exact original onset/duration; no quantization risk exists under this design. That question led
+directly to SS15 below.
+
+## SS15. Random toggles for Rotation/Length + a genuine time-stretch transform (Stretch)
+
+Two follow-up requests in the same live-test conversation:
+
+**Random Rotation / Random Length** (commit `f005b14`): same convention as Random Transpose - the
+slider becomes a range bound instead of a literal value. Rotation is symmetric like Transpose
+(`odly::resolveRandomRotationSteps`, salt 4, `[-|Rotation|, +|Rotation|]`); Length has no negative/
+symmetric meaning (always 0-100%), so its slider becomes a CEILING instead
+(`odly::resolveRandomLengthPercent`, salt 5, `[1%, Length%]`). 8 new tests (73 total).
+
+**Stretch** (commit pending, this entry): while discussing Length, the user described wanting a
+genuine proportional TIME-STRETCH of the echoed phrase - similar to Bitwig's own static MIDI-clip
+stretch, but live and per-echo, "not possible to be achieved with Bitwig only" since a clip edit can't
+re-decide itself on every single echo (especially combined with Random mode). No precedent to port
+from MPL - MPL's own patterns are locked to the host's fixed BPM/step grid with nothing to stretch;
+this transform only exists because OrchDelay owns real, freely-rescalable timestamped material.
+
+`odly::applyStretch(notes, phraseStartPpq, stretchPercent)`: rescales every note's onset (relative to
+the phrase's OWN start - the anchor note never moves) and duration by `stretchPercent/100`. 100% =
+unchanged, <100% = faster/shorter, >100% = slower/longer, with every note's RELATIVE rhythmic
+position preserved exactly (a straight proportional rescale). Composes for free with the existing
+`buildOutputNotes` schedule-time math, which only ever reads each note's offset from `phraseStartPpq`
+- a stretched offset lands in the right place with zero special-casing. `TransformKind` extended to 8
+entries (`kTransformStretch=7`); `proposeTransform`'s equal-weight pick widened 6-way -> 7-way;
+`Transform` choice parameter grew from 8 to 9 items.
+
+**Random Stretch** needed its own bound convention, distinct from both existing patterns: Stretch's
+neutral point is 100% (not 0 like Transpose/Rotation, not a 0-100% fraction like Length), so
+`odly::resolveRandomStretchPercent` (salt 6) draws uniformly between 100% and the slider's own bound -
+whichever side of 100 the bound sits on sets the direction (a 200% bound wanders slower/longer only; a
+50% bound wanders faster/shorter only; exactly 100% always resolves to 100%, no range).
+
+New parameters: `stretchPercent` (Float, 25-400%, default 100%), `stretchRandom` (Bool). Editor gained
+a Stretch slider + Random toggle row; window height 720->780 to fit. 14 new test assertions (87 total,
+all passing): `applyStretch` (100%/50%/200% exact math, anchor-note-never-moves, relative-to-
+phraseStart not absolute-zero, out-of-range clamping), dispatch, 7-way proposal coverage, and
+`resolveRandomStretchPercent`'s asymmetric-bound behavior in both directions. Rebuilt + reinstalled,
+Build ~20:35 UTC. **Not yet live-tested** - required before calling this actually done, per this
+repo's own established discipline.
