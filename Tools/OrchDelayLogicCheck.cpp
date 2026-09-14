@@ -264,6 +264,33 @@ int main()
         check (rate > 0.40 && rate < 0.60, "restlessness=0.5: observed apply-rate within a reasonable band of 50%");
     }
 
+    // --- buildOutputNotes: each note gets its OWN independent output time ---
+    // Regression test for the real live bug: firing a multi-note phrase as
+    // one atomic block-clamped operation collapsed the echo into a
+    // simultaneous cluster instead of preserving its original rhythm.
+    {
+        odly::Phrase p;
+        p.phraseStartPpq = 0.0;
+        p.phraseEndPpq = 4.0;
+        p.scheduledFirePpq = 8.0;
+        p.chosenTransform = odly::kTransformNone;
+        p.notes.push_back (makeNote (0.0, 0.95, 60));
+        p.notes.push_back (makeNote (1.0, 0.95, 62));
+        p.notes.push_back (makeNote (2.0, 0.95, 64));
+        p.notes.push_back (makeNote (3.0, 0.95, 65));
+
+        auto out = odly::buildOutputNotes (p, 0);
+        check (out.size() == 4, "buildOutputNotes: same note count as the phrase");
+        // Each note's own output onset = scheduledFirePpq + (its own onset - phraseStart) -
+        // NOT all collapsed onto scheduledFirePpq itself.
+        check (std::abs (out[0].outputOnsetPpq - 8.0) < 1e-9, "buildOutputNotes: note 1 fires exactly at scheduledFirePpq");
+        check (std::abs (out[1].outputOnsetPpq - 9.0) < 1e-9, "buildOutputNotes: note 2 fires 1 beat later, not bundled with note 1");
+        check (std::abs (out[2].outputOnsetPpq - 10.0) < 1e-9, "buildOutputNotes: note 3 fires 2 beats later");
+        check (std::abs (out[3].outputOnsetPpq - 11.0) < 1e-9, "buildOutputNotes: note 4 fires 3 beats later - the phrase's own rhythm is preserved, not clustered");
+        check (std::abs (out[0].outputOffPpq - 8.95) < 1e-9, "buildOutputNotes: output note-off preserves the note's own duration");
+        check (! out[0].emitted && ! out[1].emitted, "buildOutputNotes: notes start unemitted");
+    }
+
     // --- applyTransform dispatch ----------------------------------------------
     {
         std::vector<odly::HeldNote> notes { makeNote (0.0, 1.0, 60) };

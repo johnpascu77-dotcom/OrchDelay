@@ -33,10 +33,35 @@ namespace odly
         bool hasNoteOff = false;
     };
 
+    // One transformed, schedule-resolved note ready to be fired
+    // INDEPENDENTLY, whenever its own outputOnsetPpq arrives - never bundled
+    // with the rest of its phrase into a single block's emission. Built once
+    // by buildOutputNotes() at the moment a phrase is scheduled; firing later
+    // only ever checks each note's own outputOnsetPpq against the current
+    // block, never re-derives the transform.
+    struct ScheduledNote
+    {
+        int channel = 1;
+        int pitch = 60;
+        int velocity = 100;
+        double outputOnsetPpq = 0.0;   // absolute ppq this note actually sounds at
+        double outputOffPpq = 0.0;     // absolute ppq its note-off sounds at
+        juce::int64 seq = -1;
+        bool emitted = false;
+    };
+
     // A silence-gap-bounded group of notes, captured and fired as one whole
     // unit rather than note-by-note - preserves the "syncopated intention"
     // of the original performance the same way a musical phrase, not an
     // isolated pitch, is the natural unit for a call-and-response device.
+    // "Fired as one whole unit" describes CAPTURE (buffered together, held
+    // together, transformed together) - firing itself still happens NOTE BY
+    // NOTE, each at its own independently-arriving output time (see
+    // ScheduledNote/outputNotes below); bundling every note of a multi-note
+    // phrase into one block's emission was a real, previously-hidden bug
+    // that collapsed the echoed phrase's own rhythm into a simultaneous
+    // cluster - only exposed once phrases could actually contain more than
+    // one note (see this repo's own devlog).
     struct Phrase
     {
         int phraseId = -1;
@@ -47,6 +72,7 @@ namespace odly
         double scheduledFirePpq = -1.0;   // capture-time ppq + N bars, frozen at closure - see computeScheduledFirePpq
         int chosenTransform = 0;          // TransformKind, resolved once at closure
         bool fired = false;
+        std::vector<ScheduledNote> outputNotes;   // built once by buildOutputNotes() at schedule time
     };
 
     enum TransformKind
@@ -169,6 +195,17 @@ namespace odly
     // returns the input unchanged (a plain copy).
     std::vector<HeldNote> applyTransform (const std::vector<HeldNote>& notes, int transformKind,
                                           double phraseStartPpq, double phraseEndPpq, int transposeSemitones);
+
+    // Resolves `phrase`'s chosen transform AND the schedule-time shift
+    // (scheduledFirePpq relative to phraseStartPpq) into a list of
+    // INDEPENDENTLY-fireable output notes, computed ONCE - each note's
+    // outputOnsetPpq/outputOffPpq is a final, absolute ppq position. Call
+    // this once when a phrase is scheduled (right after chosenTransform is
+    // resolved); firing later just checks each note's own outputOnsetPpq
+    // against the current block, one at a time - never bundles a whole
+    // phrase's notes into a single block's emission (see Phrase's own doc
+    // comment for why that used to be a real bug).
+    std::vector<ScheduledNote> buildOutputNotes (const Phrase& phrase, int transposeSemitones);
 
     // --- Restlessness-driven transform proposal -----------------------------
     // A stateless FNV-1a-style hash (byte-for-byte port of OrchGate's own

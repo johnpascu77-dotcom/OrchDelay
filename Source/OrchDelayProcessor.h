@@ -99,8 +99,11 @@ private:
     std::vector<odly::ActiveFiredNote> activeFiredNotes;
 
     // Resolves the manual/proposed transform choice for a just-closed phrase
-    // and applies it, producing the note list actually scheduled to fire.
-    void resolveAndScheduleTransform (odly::Phrase& phrase);
+    // and builds its outputNotes (odly::buildOutputNotes) - each note's own
+    // independent, absolute output onset/off time, computed once here so
+    // firing later never re-derives the transform or bundles the phrase's
+    // notes into a single block's emission.
+    void resolveAndScheduleTransform (odly::Phrase& phrase, int transposeSemitones);
 
     // Silences anything currently sounding from a prior firing AND clears
     // the tracking table, in one operation - see Docs SS2's stuck-note-

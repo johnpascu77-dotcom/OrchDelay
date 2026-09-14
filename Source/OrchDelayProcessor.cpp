@@ -70,7 +70,7 @@ void OrchDelayAudioProcessor::drainAndSilence (juce::MidiBuffer& output, int sam
     activeFiredNotes.clear();
 }
 
-void OrchDelayAudioProcessor::resolveAndScheduleTransform (odly::Phrase& phrase)
+void OrchDelayAudioProcessor::resolveAndScheduleTransform (odly::Phrase& phrase, int transposeSemitones)
 {
     const float restlessness = restlessnessParameter != nullptr ? restlessnessParameter->load() : 0.0f;
     const int manualChoice = manualTransformParameter != nullptr
@@ -82,13 +82,17 @@ void OrchDelayAudioProcessor::resolveAndScheduleTransform (odly::Phrase& phrase)
     // 4=Inversion - any explicit choice (>0) always wins outright, no blending
     // with the proposal mechanism (see this header's own doc comment).
     if (manualChoice > 0)
-    {
         phrase.chosenTransform = manualChoice - 1;   // maps directly onto odly::TransformKind
-        return;
+    else
+    {
+        const auto proposal = odly::proposeTransform (instanceSeed, phraseCounter, restlessness);
+        phrase.chosenTransform = proposal.applyAny ? proposal.transformKind : odly::kTransformNone;
     }
 
-    const auto proposal = odly::proposeTransform (instanceSeed, phraseCounter, restlessness);
-    phrase.chosenTransform = proposal.applyAny ? proposal.transformKind : odly::kTransformNone;
+    // Built ONCE here, not re-derived at fire time - see odly::Phrase's own
+    // doc comment for why bundling a phrase's notes into one block's
+    // emission (the old approach) was a real bug.
+    phrase.outputNotes = odly::buildOutputNotes (phrase, transposeSemitones);
 }
 
 void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
@@ -209,12 +213,14 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         {
             const int holdBarsAtStop = holdBarsParameter != nullptr
                 ? juce::jlimit (1, 16, juce::roundToInt (holdBarsParameter->load())) : 4;
+            const int transposeSemitonesAtStop = transposeSemitonesParameter != nullptr
+                ? juce::jlimit (-48, 48, juce::roundToInt (transposeSemitonesParameter->load())) : 12;
             odly::closePhrase (openPhrase, holdBarsAtStop, beatsPerBarNow);
             ++phraseCounter;
             totalPhrasesClosedUi.fetch_add (1);
             lastScheduledFirePpqUi.store (openPhrase.scheduledFirePpq);
             odly::Phrase closed = openPhrase;
-            resolveAndScheduleTransform (closed);
+            resolveAndScheduleTransform (closed, transposeSemitonesAtStop);
             pendingPhrases.push_back (closed);
         }
         openPhrase = odly::Phrase {};
@@ -285,7 +291,7 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
                 totalPhrasesClosedUi.fetch_add (1);
                 lastScheduledFirePpqUi.store (result.closedPhrase.scheduledFirePpq);
                 odly::Phrase closed = result.closedPhrase;
-                resolveAndScheduleTransform (closed);
+                resolveAndScheduleTransform (closed, transposeSemitones);
                 pendingPhrases.push_back (closed);
             }
 
@@ -308,39 +314,44 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
             totalPhrasesClosedUi.fetch_add (1);
             lastScheduledFirePpqUi.store (timeoutResult.closedPhrase.scheduledFirePpq);
             odly::Phrase closed = timeoutResult.closedPhrase;
-            resolveAndScheduleTransform (closed);
+            resolveAndScheduleTransform (closed, transposeSemitones);
             pendingPhrases.push_back (closed);
         }
 
         furthestBlockPpqUi.store (blockEndPpq);
 
-        // --- fire any phrase whose scheduled time has arrived -------------
-        // Deliberately NOT an exact [blockStartPpq, blockEndPpq) window
-        // match - a phrase that's due (scheduledFirePpq < blockEndPpq) fires
-        // in the first block that notices, even if its exact target ppq
-        // fell in a gap between two blocks' own windows (host-side ppq
-        // rounding/jitter, or this block's own extrapolated blockEndPpq not
-        // landing exactly on the next block's freshly host-reported
-        // blockStartPpq). `onSample` below already clamps into [0,
-        // numSamples-1], so a slightly-overdue phrase still fires audibly
-        // at worst a few ms late rather than being silently skipped forever.
+        // --- fire each note of each pending phrase INDEPENDENTLY ----------
+        // Each note fires the first block its OWN outputOnsetPpq arrives -
+        // never all of a phrase's notes bundled into whichever block first
+        // notices the phrase overall is due (a real bug: that collapsed a
+        // multi-note phrase's own rhythm into a simultaneous cluster, since
+        // every note's onset got clamped into that one block's narrow
+        // sample range). outputNotes was already built once, at schedule
+        // time, by resolveAndScheduleTransform - nothing here re-derives
+        // the transform. Not an exact [blockStartPpq, blockEndPpq) window
+        // match either, for the same reason as the note-off loop below: a
+        // slightly-overdue note still fires (clamped into this block) at
+        // worst a few ms late, rather than silently falling through a gap
+        // between two blocks' own windows and never firing at all.
         for (auto& phrase : pendingPhrases)
         {
             if (phrase.fired || ! phrase.closed)
                 continue;
-            if (phrase.scheduledFirePpq >= blockEndPpq)
-                continue;   // not due yet
 
-            const auto transformed = odly::applyTransform (phrase.notes, phrase.chosenTransform,
-                                                            phrase.phraseStartPpq, phrase.phraseEndPpq,
-                                                            transposeSemitones);
+            bool anyStillPending = false;
 
-            for (const auto& note : transformed)
+            for (auto& note : phrase.outputNotes)
             {
-                const double outOnsetPpq = phrase.scheduledFirePpq + (note.onsetPpq - phrase.phraseStartPpq);
-                const double outOffPpq = outOnsetPpq + note.durationPpq;
+                if (note.emitted)
+                    continue;
+                if (note.outputOnsetPpq >= blockEndPpq)
+                {
+                    anyStillPending = true;
+                    continue;
+                }
+
                 const int onSample = juce::jlimit (0, juce::jmax (0, numSamples - 1),
-                                                   juce::roundToInt ((outOnsetPpq - blockStartPpq) / ppqPerSample));
+                                                   juce::roundToInt ((note.outputOnsetPpq - blockStartPpq) / ppqPerSample));
 
                 output.addEvent (juce::MidiMessage::noteOn (note.channel, note.pitch,
                                                              static_cast<juce::uint8> (juce::jlimit (1, 127, note.velocity))),
@@ -350,22 +361,32 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
                 active.channel = note.channel;
                 active.pitch = note.pitch;
                 active.seq = note.seq;
-                active.noteOffPpq = outOffPpq;
+                active.noteOffPpq = note.outputOffPpq;
                 activeFiredNotes.push_back (active);
+
+                note.emitted = true;
             }
 
-            phrase.fired = true;
-            totalPhrasesFiredUi.fetch_add (1);
+            if (! anyStillPending && ! phrase.outputNotes.empty())
+            {
+                phrase.fired = true;
+                totalPhrasesFiredUi.fetch_add (1);
+            }
         }
 
         pendingPhrases.erase (std::remove_if (pendingPhrases.begin(), pendingPhrases.end(),
                                               [] (const odly::Phrase& p) { return p.fired; }),
                               pendingPhrases.end());
 
-        // --- emit note-offs for anything whose scheduled off falls here ---
+        // --- emit note-offs for anything whose scheduled off has arrived --
+        // Same widened-condition reasoning as the fire loop above: a
+        // due-or-overdue note-off (noteOffPpq < blockEndPpq) still fires
+        // now, clamped into this block, rather than risking a stuck note if
+        // its exact target ppq had fallen through a gap between two blocks'
+        // own windows.
         for (auto it = activeFiredNotes.begin(); it != activeFiredNotes.end(); )
         {
-            if (it->noteOffPpq >= blockStartPpq && it->noteOffPpq < blockEndPpq)
+            if (it->noteOffPpq < blockEndPpq)
             {
                 const int offSample = juce::jlimit (0, juce::jmax (0, numSamples - 1),
                                                     juce::roundToInt ((it->noteOffPpq - blockStartPpq) / ppqPerSample));

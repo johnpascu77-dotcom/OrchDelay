@@ -180,6 +180,30 @@ namespace odly
         }
     }
 
+    std::vector<ScheduledNote> buildOutputNotes (const Phrase& phrase, int transposeSemitones)
+    {
+        const auto transformed = applyTransform (phrase.notes, phrase.chosenTransform,
+                                                  phrase.phraseStartPpq, phrase.phraseEndPpq,
+                                                  transposeSemitones);
+
+        std::vector<ScheduledNote> out;
+        out.reserve (transformed.size());
+
+        for (const auto& n : transformed)
+        {
+            ScheduledNote sn;
+            sn.channel = n.channel;
+            sn.pitch = n.pitch;
+            sn.velocity = n.velocity;
+            sn.outputOnsetPpq = phrase.scheduledFirePpq + (n.onsetPpq - phrase.phraseStartPpq);
+            sn.outputOffPpq = sn.outputOnsetPpq + n.durationPpq;
+            sn.seq = n.seq;
+            out.push_back (sn);
+        }
+
+        return out;
+    }
+
     // --- Restlessness-driven proposal (see this file's header) ---------------
 
     juce::uint32 fnv1aHash (int a, int b, int salt)
