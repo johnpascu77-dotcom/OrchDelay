@@ -39,6 +39,9 @@ void OrchDelayAudioProcessor::prepareToPlay (double newSampleRate, int samplesPe
     haveLastBlockEnd = false;
     wasPlaying = false;
     pendingPhraseCountUi.store (0);
+    totalNotesCapturedUi.store (0);
+    totalPhrasesClosedUi.store (0);
+    totalPhrasesFiredUi.store (0);
 }
 
 void OrchDelayAudioProcessor::releaseResources()
@@ -191,6 +194,7 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
                 ? juce::jlimit (1, 16, juce::roundToInt (holdBarsParameter->load())) : 4;
             odly::closePhrase (openPhrase, holdBarsAtStop, beatsPerBarNow);
             ++phraseCounter;
+            totalPhrasesClosedUi.fetch_add (1);
             odly::Phrase closed = openPhrase;
             resolveAndScheduleTransform (closed);
             pendingPhrases.push_back (closed);
@@ -237,12 +241,16 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
             event.velocity = static_cast<int> (msg.getVelocity() * 127.0f);
             event.ppq = blockStartPpq + metadata.samplePosition * ppqPerSample;
 
+            if (event.isNoteOn)
+                totalNotesCapturedUi.fetch_add (1);
+
             auto result = odly::captureEvent (event, phraseGapBeats, holdBars, beatsPerBarNow,
                                               nextNoteSeq, nextPhraseId, openPhrase);
 
             if (result.phraseClosed && ! result.closedPhrase.notes.empty())
             {
                 ++phraseCounter;
+                totalPhrasesClosedUi.fetch_add (1);
                 odly::Phrase closed = result.closedPhrase;
                 resolveAndScheduleTransform (closed);
                 pendingPhrases.push_back (closed);
@@ -264,6 +272,7 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
             timeoutResult.phraseClosed && ! timeoutResult.closedPhrase.notes.empty())
         {
             ++phraseCounter;
+            totalPhrasesClosedUi.fetch_add (1);
             odly::Phrase closed = timeoutResult.closedPhrase;
             resolveAndScheduleTransform (closed);
             pendingPhrases.push_back (closed);
@@ -301,6 +310,7 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
             }
 
             phrase.fired = true;
+            totalPhrasesFiredUi.fetch_add (1);
         }
 
         pendingPhrases.erase (std::remove_if (pendingPhrases.begin(), pendingPhrases.end(),

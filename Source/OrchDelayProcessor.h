@@ -42,8 +42,17 @@ public:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
     // --- UI read-only status (see OrchDelayEditor) --------------------------
+    // The 3 running counters below (never reset except by prepareToPlay) are
+    // a diagnostic added after two rounds of "no output, unclear why" live
+    // reports - they let a silent session be told apart at a glance: MIDI
+    // never arrived at all (notesCaptured stays 0) vs. arrived and was
+    // buffered but never closed into a phrase (phrasesClosed stays 0) vs.
+    // closed but never fired (phrasesFired stays 0, e.g. still mid-hold).
     bool hasTransportForUi() const { return haveTransportUi.load(); }
     int pendingPhraseCountForUi() const { return pendingPhraseCountUi.load(); }
+    int notesCapturedForUi() const { return totalNotesCapturedUi.load(); }
+    int phrasesClosedForUi() const { return totalPhrasesClosedUi.load(); }
+    int phrasesFiredForUi() const { return totalPhrasesFiredUi.load(); }
 
     // "Randomize" button target - writes through the normal parameter path
     // (undoable, saved in state), never a bare non-parameter side value.
@@ -67,6 +76,9 @@ private:
 
     std::atomic<bool> haveTransportUi { false };
     std::atomic<int> pendingPhraseCountUi { 0 };
+    std::atomic<int> totalNotesCapturedUi { 0 };
+    std::atomic<int> totalPhrasesClosedUi { 0 };
+    std::atomic<int> totalPhrasesFiredUi { 0 };
 
     juce::int64 nextNoteSeq = 1;      // 0 never issued, matches OrchPiano's own convention
     int nextPhraseId = 0;

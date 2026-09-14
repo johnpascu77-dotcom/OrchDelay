@@ -178,8 +178,20 @@ void OrchDelayAudioProcessorEditor::timerCallback()
     const int pending = audioProcessor.pendingPhraseCountForUi();
 
     if (! haveTransport)
+    {
         statusLabel.setText ("No transport - Standalone/no host clock: OrchDelay is inactive",
                              juce::dontSendNotification);
-    else
-        statusLabel.setText (juce::String (pending) + " phrase(s) pending", juce::dontSendNotification);
+        return;
+    }
+
+    // Session-lifetime counters (reset only on prepareToPlay), not just the
+    // live pending count - added so a silent session can be told apart at a
+    // glance: MIDI never arrived (captured stays 0) vs. arrived but never
+    // closed into a phrase (closed stays 0) vs. closed but never fired yet
+    // (fired stays 0, still mid-hold).
+    statusLabel.setText (juce::String (pending) + " pending  |  captured " +
+                         juce::String (audioProcessor.notesCapturedForUi()) + "  closed " +
+                         juce::String (audioProcessor.phrasesClosedForUi()) + "  fired " +
+                         juce::String (audioProcessor.phrasesFiredForUi()),
+                         juce::dontSendNotification);
 }
