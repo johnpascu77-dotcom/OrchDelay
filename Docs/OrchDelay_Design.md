@@ -186,5 +186,45 @@ note-on-triggered path, so `scheduledFirePpq` math is identical either way; only
 Both fixes are covered by dedicated `OrchDelayLogicCheck` regression tests (36 assertions total,
 4 new): a direct reproduction of "4 near-legato quarter notes at 1-beat spacing stay ONE phrase, not
 4," and 3 covering `checkPhraseTimeout` (closes on its own past the threshold with no follow-up note;
-does NOT close early; does not fire on a still-sounding note or an empty phrase). All passing. Live
-retest in Bitwig with the rebuilt VST3 still pending as of this writing.
+does NOT close early; does not fire on a still-sounding note or an empty phrase). All passing.
+
+## SS10. Second live test (2026-09-14) - stop discarded the last phrase before it could close
+
+Rebuilt with the SS9 fix, reinstalled - and got "no answer whatsoever" this time, worse than before.
+Root cause: `checkPhraseTimeout` only runs while `playing` is true (per its own contract - it can't
+evaluate elapsed transport time while nothing is advancing). But `stoppedPlaying` unconditionally
+DISCARDED `openPhrase`. Stopping the transport shortly after finishing a phrase - the single most
+natural way a player signals "that take is done" - meant the last phrase never got the ~1 real beat
+of continued playback it needed to close via `checkPhraseTimeout`, and never received a follow-up
+note either. It just vanished, every time, on every stop. The SS9 fix made phrase closure correctly
+require real elapsed silence instead of a lucky onset-spacing coincidence - but stopping shortly
+after playing was never given a chance to provide that silence.
+
+**Fix**: `stoppedPlaying` now closes and SCHEDULES the still-open phrase (via `closePhrase`, same as
+any other closure path) instead of discarding it - it does not fire immediately; the normal
+`scheduledFirePpq`-vs-block-range check in the fire loop still governs exactly when it sounds, same
+as always. A phrase that was ALREADY closed and mid-hold *before* this stop is still discarded, not
+force-fired - that original SS2 reasoning is unchanged and still correct; it only ever applied to
+material already scheduled, and the newly-closed-at-stop phrase is scheduled *after* that clear runs,
+so it survives.
+
+This only works, though, if an ordinary "stop, then resume from the same position" isn't
+misidentified as a rewind and purged a moment later. It would have been: `blockEndPpq` was being
+extrapolated forward by `numSamples*ppqPerSample` every block regardless of `playing`, so during any
+stopped block it kept drifting further ahead of the actual (frozen) transport position - by the time
+playback resumed, `lastBlockEndPpq` would sit well ahead of the freshly-read (correct, unchanged)
+resume position, which is exactly what the rewind check looks for. **Fixed alongside**: `blockEndPpq`
+now equals `blockStartPpq` (no extrapolation) whenever `playing` is false, so `lastBlockEndPpq` stays
+pinned at the true frozen position throughout a stop, and an ordinary resume no longer looks like a
+backward jump. With that fixed, `rewound`'s own check no longer needs to be gated to `playing &&
+wasPlaying` (i.e., "only mid-playback") - it now also correctly catches a playhead relocated backward
+*while stopped*, and the redundant separate `startedPlaying`-triggered full-clear (originally "fresh
+take starts clean") was removed - a genuine relocate-and-restart is already caught by the generalized
+`rewound` check, and an ordinary resume from exactly where playback paused no longer needs, or gets,
+a clear at all.
+
+This is a processor-level integration behavior (state across the stop/resume transport transition,
+`wasPlaying`/`lastBlockEndPpq` bookkeeping), not something expressible as a pure `odly::` function, so
+it isn't covered by `OrchDelayLogicCheck` - noted here as a real verification gap rather than forcing
+an awkward test. **Not yet live-retested in Bitwig** with this second fix - required before either
+SS9 or SS10 can be called actually resolved.

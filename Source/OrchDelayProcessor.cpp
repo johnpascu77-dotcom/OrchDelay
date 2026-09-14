@@ -130,7 +130,12 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     }
 
     const double ppqPerSample = sampleRate > 0.0 ? (bpm / 60.0) / sampleRate : 0.0;
-    const double blockEndPpq = blockStartPpq + numSamples * ppqPerSample;
+    // No time passes on the timeline while stopped - extrapolating forward
+    // by numSamples*ppqPerSample regardless of `playing` would make
+    // lastBlockEndPpq drift further ahead of the actual (frozen) transport
+    // position with every stopped block, which would then make an ordinary
+    // resume-from-where-you-paused look like a backward jump below.
+    const double blockEndPpq = playing ? (blockStartPpq + numSamples * ppqPerSample) : blockStartPpq;
     const double beatsPerBarNow = odly::beatsPerBar (tsNumerator, tsDenominator);
 
     const bool bypass = bypassParameter != nullptr && bypassParameter->load() >= 0.5f;
@@ -154,32 +159,56 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         return;
     }
 
-    const bool startedPlaying = playing && ! wasPlaying;
     const bool stoppedPlaying = ! playing && wasPlaying;
-    const bool rewound = playing && wasPlaying && haveLastBlockEnd
-                        && blockStartPpq < lastBlockEndPpq - kRewindBeatsGuard;
+    // A genuine backward jump - a loop point during continuous playback, OR
+    // the playhead relocated backward while stopped and then resumed - not
+    // an ordinary "resume from right where you paused" transition.
+    // Deliberately not gated on wasPlaying: blockEndPpq's own not-playing
+    // branch just above keeps lastBlockEndPpq frozen while stopped instead
+    // of drifting forward, so this stays accurate across a stop/resume too,
+    // not just within continuous playback.
+    const bool rewound = haveLastBlockEnd && blockStartPpq < lastBlockEndPpq - kRewindBeatsGuard;
 
     if (stoppedPlaying)
     {
-        // A phrase caught mid-hold at stop is DISCARDED, not force-fired -
-        // firing "now" defeats the device's whole purpose (Docs SS2).
-        openPhrase = odly::Phrase {};
+        // A phrase already closed and mid-hold (scheduled from BEFORE this
+        // stop) is DISCARDED, not force-fired - firing "now" defeats the
+        // device's whole purpose (Docs SS2).
         pendingPhrases.clear();
-        drainAndSilence (output, 0);
-    }
 
-    if (startedPlaying)
-    {
-        // Fresh take starts clean.
+        // But the still-OPEN (never-yet-closed) phrase reflects a take that
+        // just finished - stopping shortly after playing is the natural way
+        // a player signals "that phrase is done," not an abandoned
+        // fragment. Close and SCHEDULE it (does not fire it immediately -
+        // the normal fire loop below still governs when it actually
+        // sounds), rather than discarding it outright: without this, a real
+        // ~1-beat rest never gets the chance to elapse on its own
+        // (checkPhraseTimeout only runs while playing), so the last phrase
+        // played would silently vanish on every stop.
+        if (! openPhrase.notes.empty())
+        {
+            const int holdBarsAtStop = holdBarsParameter != nullptr
+                ? juce::jlimit (1, 16, juce::roundToInt (holdBarsParameter->load())) : 4;
+            odly::closePhrase (openPhrase, holdBarsAtStop, beatsPerBarNow);
+            ++phraseCounter;
+            odly::Phrase closed = openPhrase;
+            resolveAndScheduleTransform (closed);
+            pendingPhrases.push_back (closed);
+        }
         openPhrase = odly::Phrase {};
-        pendingPhrases.clear();
+
         drainAndSilence (output, 0);
     }
 
     if (rewound)
     {
         // Purge outright rather than attempting to re-map ppq across the
-        // discontinuity - simple and correct (Docs SS2).
+        // discontinuity - simple and correct (Docs SS2). Covers both a
+        // loop/relocate during continuous playback and the playhead moved
+        // backward while stopped, then resumed - an ordinary resume from
+        // exactly where playback paused does NOT land here (see `rewound`'s
+        // own doc comment), so a phrase closed-and-scheduled at stop
+        // survives a plain stop/resume and still fires on schedule.
         openPhrase = odly::Phrase {};
         pendingPhrases.clear();
         drainAndSilence (output, 0);
