@@ -224,6 +224,22 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
             // possibly-transformed echo ever sounds).
         }
 
+        // --- proactively close a finished phrase even with no new note ----
+        // Without this, a phrase whose last note is never followed by
+        // anything (a clip that ends, or the last take before the player
+        // stops) sits open forever and gets silently discarded on stop
+        // instead of firing back - see odly::checkPhraseTimeout's own doc
+        // comment.
+        if (auto timeoutResult = odly::checkPhraseTimeout (blockEndPpq, phraseGapBeats, holdBars,
+                                                            beatsPerBarNow, openPhrase);
+            timeoutResult.phraseClosed && ! timeoutResult.closedPhrase.notes.empty())
+        {
+            ++phraseCounter;
+            odly::Phrase closed = timeoutResult.closedPhrase;
+            resolveAndScheduleTransform (closed);
+            pendingPhrases.push_back (closed);
+        }
+
         // --- fire any phrase whose scheduled time falls in this block -----
         for (auto& phrase : pendingPhrases)
         {

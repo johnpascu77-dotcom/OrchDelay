@@ -78,11 +78,18 @@ namespace odly
 
     // Feeds one raw event into `openPhrase`, the single in-progress phrase
     // currently accepting new notes (starts as a default-constructed empty
-    // Phrase, phraseId == -1). A note-on either extends `openPhrase` (gap
-    // since its last onset below `phraseGapBeats`) or, if the gap is at/above
-    // threshold (or nothing has been captured into it yet), closes it first
-    // (via closePhrase(), using `holdBars`/`beatsPerBarNow`) and starts a
-    // fresh one. A note-off is matched FIFO against the oldest still-open
+    // Phrase, phraseId == -1). A note-on either extends `openPhrase` or, if
+    // the REST since the previous note's END is at/above `phraseGapBeats`,
+    // closes it first (via closePhrase(), using `holdBars`/`beatsPerBarNow`)
+    // and starts a fresh one. Gap is measured from the previous note's END
+    // (onset + duration), NOT onset-to-onset - two notes played legato, with
+    // durations close to their own spacing, must not read as a phrase
+    // boundary just because their onsets are far apart (onset-to-onset was
+    // the real bug behind "4 played notes, only 3 echoed back": ordinary
+    // quarter-note-spaced playing at a ~1-beat gap setting fractured into
+    // one phrase per note). A previous note still sounding (no note-off yet)
+    // has zero rest by definition - can't be "past" a gap that hasn't ended.
+    // A note-off is matched FIFO against the oldest still-open
     // (hasNoteOff==false) HeldNote in `openPhrase` sharing (channel,pitch) -
     // a stray note-off with no match (including one for a note whose phrase
     // already closed, since closePhrase() marks every note hasNoteOff==true
@@ -109,6 +116,24 @@ namespace odly
     // Docs SS3 for why fire-time meter changes must not retroactively change
     // what "N bars" meant. Sets `phrase.closed = true`.
     void closePhrase (Phrase& phrase, int holdBars, double beatsPerBar);
+
+    // Proactively closes `openPhrase` if the rest since its last note's END
+    // is at/above `phraseGapBeats`, with NO new note-on required to detect
+    // it - call once per block, after capturing that block's events, while
+    // the transport is playing. Without this, a phrase whose last note is
+    // never followed by anything else (a clip that ends, or the last take
+    // before the player stops) would sit open forever and get silently
+    // discarded on stop instead of firing back - the real cause behind
+    // "responds only to live input": live playing naturally keeps feeding
+    // new notes that close out trailing phrases via captureEvent's own gap
+    // check, but a finite clip's last phrase has no such follow-up note.
+    // No-ops (phraseClosed stays false) if `openPhrase` is empty or its last
+    // note has no note-off yet (still sounding - can't time out something
+    // that hasn't ended). Uses the same closePhrase() as captureEvent, so
+    // scheduledFirePpq math is identical either way.
+    CaptureResult checkPhraseTimeout (double nowPpq, double phraseGapBeats,
+                                      int holdBars, double beatsPerBarNow,
+                                      Phrase& openPhrase);
 
     // Bar length in ppq (quarter notes) for a given time signature - a
     // quarter note is always 1.0 ppq by definition, so a bar is

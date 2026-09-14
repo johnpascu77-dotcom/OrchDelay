@@ -140,8 +140,51 @@ would-fail-under-MPL's-convention check), Retrograde's exact time-reversal formu
 `proposeTransform` determinism and cross-instance divergence, and restlessness threshold sanity at
 0/0.5/1. All passing as of 2026-09-14.
 
-**Not yet done, required before v1 is actually "done"**: a real live test in Bitwig - play a phrase,
-confirm silence (swallowed, not passed through) then a sample-accurate echo `holdBars` bars later;
-confirm `restlessness=0` stays verbatim and raising it starts producing transforms; confirm
-transport-stop mid-hold discards cleanly with no stuck notes; confirm a loop/rewind purges pending
-phrases without leaving anything stuck.
+**Not yet done, required before v1 is actually "done"**: confirm `restlessness=0` stays verbatim and
+raising it starts producing transforms; confirm transport-stop mid-hold discards cleanly with no
+stuck notes; confirm a loop/rewind purges pending phrases without leaving anything stuck.
+
+## SS9. First live test in Bitwig (2026-09-14) - two real bugs found and fixed
+
+The 4-bar hold/fire timing itself worked correctly on the very first live test ("It landed well. 4
+bars successfully delayed"). But two real bugs surfaced that no synthetic test had caught, because
+both only manifest against genuinely continuous transport time, which `OrchDelayLogicCheck`'s
+hand-constructed ppq values never exercised realistically:
+
+**Bug 1 - phrase-gap detection used onset-to-onset spacing, not rest.** `captureEvent`'s gap check
+compared a new note's onset directly against the PREVIOUS note's onset, not its end. For 4 live
+quarter notes played back-to-back (onset spacing ~1 beat, matching the default 1.0-beat Phrase Gap),
+this meant nearly every note-to-note transition looked like a phrase boundary even though the actual
+rest (silence) between notes was near zero - fracturing what should have been one 4-note phrase into
+up to 4 separate one-note phrases. Live symptom: "for 4 quantized quarters I get only 3 delayed" -
+the reported 3rd fired echo was actually 3 separate single-note phrases firing at 3 different times;
+the 4th note's own phrase never closed (see Bug 2) and got silently wiped on stop, never echoing at
+all - hence "only 3."
+
+**Bug 2 - a phrase could only close via a SUBSEQUENT note-on's gap check, never on its own.**
+`captureEvent` is the only place phrase closure was ever evaluated, and it only runs when a new MIDI
+event arrives. A phrase whose last note is never followed by anything else - a finite clip that ends,
+or the last take before the player simply stops - had no way to close: there was no next note-on to
+notice the gap had elapsed. It just sat open forever, then got silently discarded (per the deliberate
+"discard, don't force-fire" stop behavior) the moment the transport stopped. This is the real
+explanation for "responds only to live input; not receiving from other tracks or from a recorded midi
+on its own track" - the plugin WAS receiving and correctly swallowing that MIDI (a MIDI-effect insert
+can't structurally distinguish live-played notes from clip-played ones; both arrive identically in
+`processBlock`'s `MidiBuffer`), it just never fired anything back, because a finite clip's few notes
+followed by silence never produced a follow-up note-on to trigger closure. Live playing happened to
+mask this because the player naturally keeps feeding new notes, which closed out trailing phrases via
+the normal captureEvent gap check - purely incidental, not by design.
+
+**Fix**: (1) `captureEvent`'s gap check now measures rest from the previous note's actual END
+(`onset + duration`, or the current event's own ppq - i.e. zero rest - if that note has no note-off
+yet, since it's still sounding) rather than onset-to-onset. (2) A new `odly::checkPhraseTimeout()`
+function, called once per block in `processBlock` after the normal event-capture loop (whenever
+`playing` is true), proactively closes `openPhrase` once the rest since its last note's end reaches
+`phraseGapBeats` - with no new note-on required. This uses the exact same `closePhrase()` as the
+note-on-triggered path, so `scheduledFirePpq` math is identical either way; only the trigger differs.
+
+Both fixes are covered by dedicated `OrchDelayLogicCheck` regression tests (36 assertions total,
+4 new): a direct reproduction of "4 near-legato quarter notes at 1-beat spacing stay ONE phrase, not
+4," and 3 covering `checkPhraseTimeout` (closes on its own past the threshold with no follow-up note;
+does NOT close early; does not fire on a still-sounding note or an empty phrase). All passing. Live
+retest in Bitwig with the rebuilt VST3 still pending as of this writing.

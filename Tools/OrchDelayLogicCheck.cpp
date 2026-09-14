@@ -45,20 +45,28 @@ int main()
     }
 
     // --- phrase-boundary grouping via captureEvent --------------------------
+    // Gap is measured as REST since the previous note's END, not onset-to-
+    // onset - every scenario below sends an explicit note-off to establish
+    // that end point before checking the next note-on's gap.
     {
         juce::int64 seq = 1;
         int phraseId = 0;
         odly::Phrase open;
 
-        // Two note-ons 0.5 beats apart (below the 1.0-beat default gap) stay one phrase.
         auto r1 = odly::captureEvent ({ true, 1, 60, 100, 0.0 }, 1.0, 4, 4.0, seq, phraseId, open);
         check (! r1.phraseClosed, "grouping: first note never closes anything");
-        auto r2 = odly::captureEvent ({ true, 1, 62, 100, 0.5 }, 1.0, 4, 4.0, seq, phraseId, open);
-        check (! r2.phraseClosed && open.notes.size() == 2, "grouping: gap below threshold stays in the same phrase");
+        odly::captureEvent ({ false, 1, 60, 0, 0.9 }, 1.0, 4, 4.0, seq, phraseId, open);   // note ends at 0.9
 
-        // A gap AT the threshold (1.0 beat) closes it.
-        auto r3 = odly::captureEvent ({ true, 1, 64, 100, 1.5 }, 1.0, 4, 4.0, seq, phraseId, open);
-        check (r3.phraseClosed && r3.closedPhrase.notes.size() == 2, "grouping: gap at threshold closes the phrase (2 notes)");
+        // Onset at 1.0 -> rest = 1.0 - 0.9 = 0.1, well below the 1.0 threshold,
+        // even though onset-to-onset (1.0) sits right AT the old (buggy) check.
+        auto r2 = odly::captureEvent ({ true, 1, 62, 100, 1.0 }, 1.0, 4, 4.0, seq, phraseId, open);
+        check (! r2.phraseClosed && open.notes.size() == 2,
+              "grouping: rest below threshold stays in the same phrase, even with a ~1-beat onset gap");
+        odly::captureEvent ({ false, 1, 62, 0, 1.9 }, 1.0, 4, 4.0, seq, phraseId, open);   // note ends at 1.9
+
+        // Onset at 3.0 -> rest = 3.0 - 1.9 = 1.1, at/above the threshold.
+        auto r3 = odly::captureEvent ({ true, 1, 64, 100, 3.0 }, 1.0, 4, 4.0, seq, phraseId, open);
+        check (r3.phraseClosed && r3.closedPhrase.notes.size() == 2, "grouping: rest at/above threshold closes the phrase (2 notes)");
         check (open.notes.size() == 1 && open.notes.front().pitch == 64, "grouping: the new note starts a fresh phrase");
     }
     {
@@ -71,13 +79,68 @@ int main()
         check (open.notes.size() == 1, "grouping: a single note is a valid one-note in-progress phrase");
     }
     {
-        // Zero-gap-tolerance edge case: threshold 0.0 closes on ANY gap, even a tiny one.
+        // Zero-gap-tolerance edge case: threshold 0.0 closes on ANY rest, even a tiny one.
         juce::int64 seq = 1;
         int phraseId = 0;
         odly::Phrase open;
         odly::captureEvent ({ true, 1, 60, 100, 0.0 }, 0.0, 4, 4.0, seq, phraseId, open);
+        odly::captureEvent ({ false, 1, 60, 0, 0.0005 }, 0.0, 4, 4.0, seq, phraseId, open);
         auto r = odly::captureEvent ({ true, 1, 62, 100, 0.001 }, 0.0, 4, 4.0, seq, phraseId, open);
-        check (r.phraseClosed, "grouping: threshold 0.0 closes on any nonzero gap");
+        check (r.phraseClosed, "grouping: threshold 0.0 closes on any nonzero rest");
+    }
+    {
+        // Regression test for the real live bug ("4 played, only 3 echoed"):
+        // 4 near-legato quarter notes (each ~0.95 beats long) spaced 1.0 beat
+        // apart in ONSET, with phraseGapBeats == 1.0 (the onset spacing
+        // itself). Under the old onset-to-onset check this fractured into 4
+        // separate one-note phrases; the true rest between notes (~0.05
+        // beat) is far below the threshold, so it must stay ONE phrase.
+        juce::int64 seq = 1;
+        int phraseId = 0;
+        odly::Phrase open;
+        const double phraseGap = 1.0;
+
+        for (int i = 0; i < 4; ++i)
+        {
+            const double onset = static_cast<double> (i);
+            odly::captureEvent ({ true, 1, 60 + i, 100, onset }, phraseGap, 4, 4.0, seq, phraseId, open);
+            odly::captureEvent ({ false, 1, 60 + i, 0, onset + 0.95 }, phraseGap, 4, 4.0, seq, phraseId, open);
+        }
+        check (open.notes.size() == 4,
+              "grouping: 4 near-legato quarter notes at 1-beat spacing stay ONE phrase, not 4 (the real live bug)");
+    }
+
+    // --- checkPhraseTimeout: closes a finished phrase with no follow-up note ---
+    {
+        odly::Phrase open;
+        juce::int64 seq = 1;
+        int phraseId = 0;
+        odly::captureEvent ({ true, 1, 60, 100, 0.0 }, 1.0, 4, 4.0, seq, phraseId, open);
+        odly::captureEvent ({ false, 1, 60, 0, 0.9 }, 1.0, 4, 4.0, seq, phraseId, open);   // ends at 0.9
+
+        auto tooSoon = odly::checkPhraseTimeout (1.5, 1.0, 4, 4.0, open);   // rest so far = 0.6
+        check (! tooSoon.phraseClosed && open.notes.size() == 1,
+              "checkPhraseTimeout: not yet closed while rest is still below the threshold");
+
+        auto closed = odly::checkPhraseTimeout (2.0, 1.0, 4, 4.0, open);   // rest so far = 1.1
+        check (closed.phraseClosed && closed.closedPhrase.notes.size() == 1 && open.notes.empty(),
+              "checkPhraseTimeout: closes on its own once the rest threshold passes, with NO follow-up note - "
+              "the fix for a finite clip's trailing phrase never firing back");
+    }
+    {
+        // Must not fire while the last note is still sounding (no note-off) -
+        // can't call a rest "elapsed" for a note that hasn't ended.
+        odly::Phrase open;
+        juce::int64 seq = 1;
+        int phraseId = 0;
+        odly::captureEvent ({ true, 1, 60, 100, 0.0 }, 1.0, 4, 4.0, seq, phraseId, open);
+        auto r = odly::checkPhraseTimeout (100.0, 1.0, 4, 4.0, open);
+        check (! r.phraseClosed, "checkPhraseTimeout: never closes while the last note is still held (no note-off)");
+    }
+    {
+        odly::Phrase empty;
+        auto r = odly::checkPhraseTimeout (100.0, 1.0, 4, 4.0, empty);
+        check (! r.phraseClosed, "checkPhraseTimeout: no-op on an empty open phrase");
     }
 
     // --- note-off matching / seq discipline ---------------------------------

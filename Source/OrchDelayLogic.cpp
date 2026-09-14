@@ -48,8 +48,18 @@ namespace odly
         if (event.isNoteOn)
         {
             const bool nothingOpenYet = openPhrase.notes.empty();
-            const double lastOnset = nothingOpenYet ? event.ppq : openPhrase.notes.back().onsetPpq;
-            const bool gapExceeded = ! nothingOpenYet && (event.ppq - lastOnset) >= phraseGapBeats;
+            bool gapExceeded = false;
+
+            if (! nothingOpenYet)
+            {
+                const HeldNote& last = openPhrase.notes.back();
+                // Rest since the last note's END, not onset-to-onset (see
+                // this function's own doc comment) - a note still sounding
+                // (no note-off yet) has zero rest.
+                const double lastEndPpq = last.hasNoteOff ? (last.onsetPpq + last.durationPpq) : event.ppq;
+                const double restBeats = juce::jmax (0.0, event.ppq - lastEndPpq);
+                gapExceeded = restBeats >= phraseGapBeats;
+            }
 
             if (nothingOpenYet && openPhrase.phraseId < 0)
                 openPhrase.phraseId = nextPhraseId++;
@@ -88,6 +98,31 @@ namespace odly
             // No match (including a note whose phrase already closed) -
             // dropped silently, per this function's own doc comment.
         }
+
+        return result;
+    }
+
+    CaptureResult checkPhraseTimeout (double nowPpq, double phraseGapBeats,
+                                      int holdBars, double beatsPerBarNow,
+                                      Phrase& openPhrase)
+    {
+        CaptureResult result;
+
+        if (openPhrase.notes.empty())
+            return result;
+
+        const HeldNote& last = openPhrase.notes.back();
+        if (! last.hasNoteOff)
+            return result;   // still sounding - not past yet
+
+        const double lastEndPpq = last.onsetPpq + last.durationPpq;
+        if ((nowPpq - lastEndPpq) < phraseGapBeats)
+            return result;
+
+        closePhrase (openPhrase, holdBars, beatsPerBarNow);
+        result.phraseClosed = true;
+        result.closedPhrase = openPhrase;
+        openPhrase = Phrase {};
 
         return result;
     }
