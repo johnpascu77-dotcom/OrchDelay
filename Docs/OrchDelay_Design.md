@@ -314,6 +314,30 @@ first.
 A dedicated regression test (`buildOutputNotes`) reproduces the exact bug directly: 4 notes a beat
 apart must each get their own independent output onset (verified exactly, not just "looks staggered"),
 not all collapsed onto `scheduledFirePpq`. 42 assertions total, all passing. Rebuilt + reinstalled,
-Build ~17:50 UTC. Live-retest pending - if this resolves it, the SS9 through SS12 arc (gap detection,
-stop scheduling, rewind gating, stop's own clear, the fire condition, and now per-note firing) is
-finally closed.
+Build ~17:50 UTC.
+
+## SS13. Hold Bars=1 edge case - scheduledFirePpq re-anchored to phraseEnd + floored at closure
+
+Seventh live test confirmed SS12's fix: Hold Bars 2 and 3 both echoed correctly, preserving the
+original rhythm. But Hold Bars=1 still misbehaved: the first (and sometimes second) note fired almost
+simultaneously instead of spread across the bar - worse with a larger Phrase Gap, better (but not
+fully clean, and with a shortened first note) with a smaller one.
+
+Root cause: `scheduledFirePpq` was computed as `phraseStart + holdBars*bar`. But a phrase can't
+actually CLOSE until `phraseGapBeats` of rest has elapsed PAST ITS OWN END - so whenever `holdBars`
+(in bars) is comparable to or shorter than `phraseGapBeats` (in beats), the nominal echo start point
+can fall BEFORE the phrase is even known to be closed. By the time closure finally happens, one or
+more notes' own intended output onsets are already in the past, so SS12's per-note fire loop (correctly
+now) fires them all in the very next block it gets - which just happens to be "immediately," collapsing
+them together despite per-note firing being otherwise correct.
+
+**Fix**: `scheduledFirePpq` is now anchored to `phraseEndPpq` instead of `phraseStartPpq` (also the more
+natural "responsorial" reading - answer N bars after the phrase is DONE, not N bars after it began),
+and floored at `nowPpq` (the closure call's own ppq) so an echo can never be scheduled before its
+source material even exists, for any holdBars/phraseGapBeats combination. `closePhrase()` gained a
+`nowPpq` parameter; all 3 call sites (`captureEvent`'s own gap-triggered close, `checkPhraseTimeout`,
+and the processor's stop-triggered close) now pass the real ppq at closure. 2 tests updated/added
+directly covering the new anchor and the floor. 44 assertions, all passing. Rebuilt + reinstalled,
+Build ~18:03 UTC. Live-retest pending - if this closes it out, the SS9 through SS13 arc (gap detection,
+stop scheduling, rewind gating, stop's own clear, the fire condition, per-note firing, and now the
+schedule-time anchor/floor) is finally done.
