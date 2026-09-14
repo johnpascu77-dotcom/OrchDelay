@@ -189,9 +189,12 @@ void OrchDelayAudioProcessorEditor::timerCallback()
     // glance: MIDI never arrived (captured stays 0) vs. arrived but never
     // closed into a phrase (closed stays 0) vs. closed but never fired yet
     // (fired stays 0, still mid-hold).
-    statusLabel.setText (juce::String (pending) + " pending  |  captured " +
-                         juce::String (audioProcessor.notesCapturedForUi()) + "  closed " +
-                         juce::String (audioProcessor.phrasesClosedForUi()) + "  fired " +
-                         juce::String (audioProcessor.phrasesFiredForUi()),
+    statusLabel.setText (juce::String (pending) + " pend | cap " +
+                         juce::String (audioProcessor.notesCapturedForUi()) + " cls " +
+                         juce::String (audioProcessor.phrasesClosedForUi()) + " fire " +
+                         juce::String (audioProcessor.phrasesFiredForUi()) + " stop " +
+                         juce::String (audioProcessor.stopEventsForUi()) + " rwSeen " +
+                         juce::String (audioProcessor.rewindDetectedForUi()) + " rwAct " +
+                         juce::String (audioProcessor.rewindActedForUi()),
                          juce::dontSendNotification);
 }

@@ -42,6 +42,9 @@ void OrchDelayAudioProcessor::prepareToPlay (double newSampleRate, int samplesPe
     totalNotesCapturedUi.store (0);
     totalPhrasesClosedUi.store (0);
     totalPhrasesFiredUi.store (0);
+    totalStopEventsUi.store (0);
+    totalRewindDetectedUi.store (0);
+    totalRewindActedUi.store (0);
 }
 
 void OrchDelayAudioProcessor::releaseResources()
@@ -174,20 +177,32 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
 
     if (stoppedPlaying)
     {
-        // A phrase already closed and mid-hold (scheduled from BEFORE this
-        // stop) is DISCARDED, not force-fired - firing "now" defeats the
-        // device's whole purpose (Docs SS2).
-        pendingPhrases.clear();
+        totalStopEventsUi.fetch_add (1);
 
-        // But the still-OPEN (never-yet-closed) phrase reflects a take that
-        // just finished - stopping shortly after playing is the natural way
-        // a player signals "that phrase is done," not an abandoned
-        // fragment. Close and SCHEDULE it (does not fire it immediately -
-        // the normal fire loop below still governs when it actually
-        // sounds), rather than discarding it outright: without this, a real
-        // ~1-beat rest never gets the chance to elapse on its own
+        // Do NOT discard pendingPhrases here anymore. The original v1
+        // design (Docs SS2) discarded anything mid-hold at stop, reasoning
+        // that firing "now" would defeat the device's purpose - but closing
+        // and SCHEDULING (not firing immediately) never needed that
+        // sacrifice, and unconditionally clearing here turned out actively
+        // harmful: if the host ever reports isPlaying() flipping true/false
+        // more than once across what is really one user stop gesture (seen
+        // live - stop events counted higher than actual stop presses), each
+        // extra stoppedPlaying transition would silently wipe out the very
+        // phrase the FIRST one had just closed and scheduled a moment
+        // earlier, before it ever got the chance to fire. Nothing here
+        // needs pendingPhrases touched at all - only the still-OPEN
+        // (never-yet-closed) phrase does, below.
+
+        // The still-OPEN phrase reflects a take that just finished -
+        // stopping shortly after playing is the natural way a player
+        // signals "that phrase is done," not an abandoned fragment. Close
+        // and SCHEDULE it (does not fire it immediately - the normal fire
+        // loop below still governs when it actually sounds): without this,
+        // a real ~1-beat rest never gets the chance to elapse on its own
         // (checkPhraseTimeout only runs while playing), so the last phrase
-        // played would silently vanish on every stop.
+        // played would silently vanish on every stop. On a repeated/glitchy
+        // stoppedPlaying transition, openPhrase is already empty by then, so
+        // this is naturally a no-op the second time - nothing to guard.
         if (! openPhrase.notes.empty())
         {
             const int holdBarsAtStop = holdBarsParameter != nullptr
@@ -218,8 +233,13 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     // branch keeps lastBlockEndPpq pinned at the true frozen position
     // throughout, so a genuine resume-from-an-earlier-point is still caught
     // correctly the moment `playing` goes true again.
+    if (rewound)
+        totalRewindDetectedUi.fetch_add (1);
+
     if (rewound && playing)
     {
+        totalRewindActedUi.fetch_add (1);
+
         // Purge outright rather than attempting to re-map ppq across the
         // discontinuity - simple and correct (Docs SS2).
         openPhrase = odly::Phrase {};
