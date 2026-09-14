@@ -56,6 +56,8 @@ public:
     int stopEventsForUi() const { return totalStopEventsUi.load(); }
     int rewindDetectedForUi() const { return totalRewindDetectedUi.load(); }
     int rewindActedForUi() const { return totalRewindActedUi.load(); }
+    double lastScheduledFirePpqForUi() const { return lastScheduledFirePpqUi.load(); }
+    double furthestBlockPpqForUi() const { return furthestBlockPpqUi.load(); }
 
     // "Randomize" button target - writes through the normal parameter path
     // (undoable, saved in state), never a bare non-parameter side value.
@@ -85,6 +87,8 @@ private:
     std::atomic<int> totalStopEventsUi { 0 };      // how many stoppedPlaying transitions fired
     std::atomic<int> totalRewindDetectedUi { 0 };   // `rewound` true, regardless of the playing gate
     std::atomic<int> totalRewindActedUi { 0 };      // `rewound && playing` - the purge actually ran
+    std::atomic<double> lastScheduledFirePpqUi { -1.0 };   // most recent phrase's scheduledFirePpq
+    std::atomic<double> furthestBlockPpqUi { -1.0 };       // furthest blockEndPpq ever seen while playing
 
     juce::int64 nextNoteSeq = 1;      // 0 never issued, matches OrchPiano's own convention
     int nextPhraseId = 0;

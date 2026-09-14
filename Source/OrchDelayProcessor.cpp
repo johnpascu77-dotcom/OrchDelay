@@ -45,6 +45,8 @@ void OrchDelayAudioProcessor::prepareToPlay (double newSampleRate, int samplesPe
     totalStopEventsUi.store (0);
     totalRewindDetectedUi.store (0);
     totalRewindActedUi.store (0);
+    lastScheduledFirePpqUi.store (-1.0);
+    furthestBlockPpqUi.store (-1.0);
 }
 
 void OrchDelayAudioProcessor::releaseResources()
@@ -210,6 +212,7 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
             odly::closePhrase (openPhrase, holdBarsAtStop, beatsPerBarNow);
             ++phraseCounter;
             totalPhrasesClosedUi.fetch_add (1);
+            lastScheduledFirePpqUi.store (openPhrase.scheduledFirePpq);
             odly::Phrase closed = openPhrase;
             resolveAndScheduleTransform (closed);
             pendingPhrases.push_back (closed);
@@ -280,6 +283,7 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
             {
                 ++phraseCounter;
                 totalPhrasesClosedUi.fetch_add (1);
+                lastScheduledFirePpqUi.store (result.closedPhrase.scheduledFirePpq);
                 odly::Phrase closed = result.closedPhrase;
                 resolveAndScheduleTransform (closed);
                 pendingPhrases.push_back (closed);
@@ -302,18 +306,30 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         {
             ++phraseCounter;
             totalPhrasesClosedUi.fetch_add (1);
+            lastScheduledFirePpqUi.store (timeoutResult.closedPhrase.scheduledFirePpq);
             odly::Phrase closed = timeoutResult.closedPhrase;
             resolveAndScheduleTransform (closed);
             pendingPhrases.push_back (closed);
         }
 
-        // --- fire any phrase whose scheduled time falls in this block -----
+        furthestBlockPpqUi.store (blockEndPpq);
+
+        // --- fire any phrase whose scheduled time has arrived -------------
+        // Deliberately NOT an exact [blockStartPpq, blockEndPpq) window
+        // match - a phrase that's due (scheduledFirePpq < blockEndPpq) fires
+        // in the first block that notices, even if its exact target ppq
+        // fell in a gap between two blocks' own windows (host-side ppq
+        // rounding/jitter, or this block's own extrapolated blockEndPpq not
+        // landing exactly on the next block's freshly host-reported
+        // blockStartPpq). `onSample` below already clamps into [0,
+        // numSamples-1], so a slightly-overdue phrase still fires audibly
+        // at worst a few ms late rather than being silently skipped forever.
         for (auto& phrase : pendingPhrases)
         {
             if (phrase.fired || ! phrase.closed)
                 continue;
-            if (phrase.scheduledFirePpq < blockStartPpq || phrase.scheduledFirePpq >= blockEndPpq)
-                continue;
+            if (phrase.scheduledFirePpq >= blockEndPpq)
+                continue;   // not due yet
 
             const auto transformed = odly::applyTransform (phrase.notes, phrase.chosenTransform,
                                                             phrase.phraseStartPpq, phrase.phraseEndPpq,
