@@ -275,4 +275,45 @@ once firing was already deferred to the normal schedule rather than forced immed
 
 Added 3 more counters (`stopEventsForUi`/`rewindDetectedForUi`/`rewindActedForUi`) so the next test, if
 this still doesn't resolve it, will be immediately conclusive rather than another guess. Rebuilt +
-reinstalled, Build ~17:23 UTC. Live-retest pending.
+reinstalled, Build ~17:23 UTC.
+
+**Fifth live test**: a fully clean 8-bar pass (confirmed no loop region, no stop, no rewind at all -
+`rwSeen 0`) STILL produced silence: `cls 1, fire 0, pend 1` the entire time, despite playback clearly
+sweeping well past where the phrase should have fired. Widened the fire loop's condition from an exact
+`[blockStartPpq, blockEndPpq)` window match to simply `scheduledFirePpq < blockEndPpq` (fires in the
+first block that notices something is due, immune to any gap between two blocks' own windows), and
+added `lastScheduledFirePpqUi`/`furthestBlockPpqUi` ("sched X reached Y") to see the exact numbers
+directly instead of guessing further. Also widened the note-off emission loop's window check the same
+way, closing the same class of gap risk there (a latent stuck-note risk, never actually observed but
+real).
+
+**Sixth live test, this fix**: phrases finally fired - "the good news is that they fire after the
+specified hold bars correctly" (Hold Bars=2, scheduled at ppq 8.0, fired once playback reached it).
+But: "all notes fire as cluster" - all 4 notes of the echoed phrase sounded simultaneously instead of
+preserving the original rhythm.
+
+## SS12. The actual cluster bug - firing bundled a whole phrase into one block
+
+Root cause: the fire loop treated "is this phrase due" as one atomic, whole-phrase check, then emitted
+EVERY note of the phrase within that SAME triggering block - each note's own onset got clamped into
+that one block's narrow sample range via `onSample`'s `jlimit`, collapsing 4 notes spread across a full
+bar into a single instant. This was invisible in every earlier test: the SS9-era broken gap-detection
+fractured every phrase into single notes, so there was never more than one note in a phrase to
+collapse - SS9's own fix (correctly grouping a real phrase back together) is what finally exposed this
+pre-existing, previously-unreachable bug.
+
+**Fix**: added `odly::ScheduledNote` + `odly::buildOutputNotes()` - the transform and the schedule-time
+shift are now resolved ONCE, at scheduling time (inside `resolveAndScheduleTransform`, which now also
+takes `transposeSemitones`), into a list of INDEPENDENTLY-fireable notes stored on `Phrase::outputNotes`
+- each carrying its own absolute output onset/off ppq and an `emitted` flag. The fire loop now checks
+and emits each note on its own, across however many blocks are needed for playback to reach each one,
+rather than bundling a whole phrase's notes into whichever single block first notices the phrase
+overall is due. `totalPhrasesFiredUi` now increments once the LAST note of a phrase is emitted, not the
+first.
+
+A dedicated regression test (`buildOutputNotes`) reproduces the exact bug directly: 4 notes a beat
+apart must each get their own independent output onset (verified exactly, not just "looks staggered"),
+not all collapsed onto `scheduledFirePpq`. 42 assertions total, all passing. Rebuilt + reinstalled,
+Build ~17:50 UTC. Live-retest pending - if this resolves it, the SS9 through SS12 arc (gap detection,
+stop scheduling, rewind gating, stop's own clear, the fire condition, and now per-note firing) is
+finally closed.
