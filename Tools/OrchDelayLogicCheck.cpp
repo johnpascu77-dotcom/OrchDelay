@@ -532,6 +532,40 @@ int main()
               "proposeWeightedTransform: restlessness=0 still never proposes a transform (the gate is unchanged)");
     }
 
+    // --- computePhraseInterest: a 0..1 structural "worth answering" score ---
+    {
+        check (std::abs (odly::computePhraseInterest ({ makeNote (0.0, 1.0, 60) }) - 0.0f) < 1e-6f,
+              "computePhraseInterest: a single note scores 0 - about as low-interest as it gets");
+        check (std::abs (odly::computePhraseInterest ({}) - 0.0f) < 1e-6f,
+              "computePhraseInterest: an empty phrase scores 0, no crash");
+
+        std::vector<odly::HeldNote> repeated {
+            makeNote (0.0, 1.0, 60), makeNote (1.0, 1.0, 60), makeNote (2.0, 1.0, 60), makeNote (3.0, 1.0, 60)
+        };
+        const float repeatedScore = odly::computePhraseInterest (repeated);
+
+        std::vector<odly::HeldNote> varied {
+            makeNote (0.0, 1.0, 55), makeNote (1.0, 1.0, 62), makeNote (2.0, 1.0, 58), makeNote (3.0, 1.0, 67)
+        };
+        const float variedScore = odly::computePhraseInterest (varied);
+
+        check (variedScore > repeatedScore,
+              "computePhraseInterest: 4 distinct, spread-out pitches scores higher than the same note repeated 4 times");
+        check (repeatedScore >= 0.0f && repeatedScore < 0.5f,
+              "computePhraseInterest: a repeated single pitch scores low despite having several notes (variety still near 0)");
+        check (variedScore > 0.5f, "computePhraseInterest: a genuinely varied, spread-out phrase scores solidly high");
+
+        // 6 distinct pitches (count factor saturates at 6), spanning exactly
+        // an octave (spread factor saturates at 12 semitones) - every one
+        // of the 3 factors hits its own maximum simultaneously.
+        std::vector<odly::HeldNote> sixDistinct {
+            makeNote (0.0, 1.0, 60), makeNote (1.0, 1.0, 62), makeNote (2.0, 1.0, 64),
+            makeNote (3.0, 1.0, 67), makeNote (4.0, 1.0, 69), makeNote (5.0, 1.0, 72)
+        };
+        check (std::abs (odly::computePhraseInterest (sixDistinct) - 1.0f) < 1e-3f,
+              "computePhraseInterest: enough notes, full variety, and a wide-enough spread scores the maximum 1.0");
+    }
+
     // --- resolveRandomTransposeSemitones: deterministic, ranged, symmetric ---
     {
         const int a = odly::resolveRandomTransposeSemitones (5, 3, 12);

@@ -15,7 +15,7 @@ namespace
 OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
-    setSize (520, 914);
+    setSize (520, 968);
 
     titleLabel.setText ("OrchDelay", juce::dontSendNotification);
     titleLabel.setJustificationType (juce::Justification::centred);
@@ -82,6 +82,10 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     setupLabel (phraseGapLabel, "Phrase Gap (beats)");
     addAndMakeVisible (phraseGapLabel);
     setupSlider (phraseGapSlider);
+
+    setupLabel (minimumInterestLabel, "Minimum Interest");
+    addAndMakeVisible (minimumInterestLabel);
+    setupSlider (minimumInterestSlider);
 
     setupLabel (restlessnessLabel, "Restlessness");
     addAndMakeVisible (restlessnessLabel);
@@ -169,6 +173,7 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     holdBarsRandomAttachment = std::make_unique<ButtonAttachment> (state, "holdBarsRandom", holdBarsRandomButton);
     overlapModeAttachment = std::make_unique<ComboBoxAttachment> (state, "overlapMode", overlapModeBox);
     phraseGapAttachment = std::make_unique<SliderAttachment> (state, "phraseGapBeats", phraseGapSlider);
+    minimumInterestAttachment = std::make_unique<SliderAttachment> (state, "minimumInterest", minimumInterestSlider);
     restlessnessAttachment = std::make_unique<SliderAttachment> (state, "restlessness", restlessnessSlider);
     contentAwareWeightingAttachment = std::make_unique<ButtonAttachment> (state, "contentAwareWeighting", contentAwareWeightingButton);
     transformAttachment = std::make_unique<ComboBoxAttachment> (state, "manualTransform", transformBox);
@@ -228,6 +233,10 @@ void OrchDelayAudioProcessorEditor::resized()
     phraseGapSlider.setBounds (row());
     area.removeFromTop (8);
 
+    minimumInterestLabel.setBounds (row (18));
+    minimumInterestSlider.setBounds (row());
+    area.removeFromTop (8);
+
     restlessnessLabel.setBounds (row (18));
     auto restlessnessRow = row();
     contentAwareWeightingButton.setBounds (restlessnessRow.removeFromRight (110));
@@ -283,7 +292,7 @@ void OrchDelayAudioProcessorEditor::resized()
     instanceSeedSlider.setBounds (seedRow);
     area.removeFromTop (12);
 
-    statusLabel.setBounds (row (52));
+    statusLabel.setBounds (row (68));
 }
 
 void OrchDelayAudioProcessorEditor::timerCallback()
@@ -315,6 +324,8 @@ void OrchDelayAudioProcessorEditor::timerCallback()
                          juce::String (audioProcessor.furthestBlockPpqForUi(), 2) + "\nchoice " +
                          juce::String (audioProcessor.lastManualChoiceForUi()) + " xform " +
                          juce::String (audioProcessor.lastChosenTransformForUi()) + " stretch% " +
-                         juce::String (audioProcessor.lastResolvedStretchPercentForUi(), 1),
+                         juce::String (audioProcessor.lastResolvedStretchPercentForUi(), 1) + "\nskipQ " +
+                         juce::String (audioProcessor.skippedQualityForUi()) + " interest " +
+                         juce::String (audioProcessor.lastPhraseInterestForUi(), 1),
                          juce::dontSendNotification);
 }

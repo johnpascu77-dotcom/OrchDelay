@@ -62,6 +62,8 @@ public:
     int lastManualChoiceForUi() const { return lastManualChoiceUi.load(); }
     float lastResolvedStretchPercentForUi() const { return lastResolvedStretchPercentUi.load(); }
     int skippedBusyForUi() const { return totalPhrasesSkippedBusyUi.load(); }
+    int skippedQualityForUi() const { return totalPhrasesSkippedQualityUi.load(); }
+    float lastPhraseInterestForUi() const { return lastPhraseInterestUi.load(); }
 
     // "Randomize" button target - writes through the normal parameter path
     // (undoable, saved in state), never a bare non-parameter side value.
@@ -89,6 +91,7 @@ private:
     std::atomic<float>* intervalScalePercentParameter = nullptr;
     std::atomic<float>* intervalRandomParameter = nullptr;
     std::atomic<float>* contentAwareWeightingParameter = nullptr;
+    std::atomic<float>* minimumInterestParameter = nullptr;
     std::atomic<float>* instanceSeedParameter = nullptr;
 
     double sampleRate = 44100.0;
@@ -110,6 +113,8 @@ private:
     std::atomic<int> lastManualChoiceUi { -1 };      // raw manualTransform parameter value read last time
     std::atomic<float> lastResolvedStretchPercentUi { -1.0f };   // actual stretch % passed to buildOutputNotes
     std::atomic<int> totalPhrasesSkippedBusyUi { 0 };   // Overlap Mode "Skip" discards - due while busy
+    std::atomic<int> totalPhrasesSkippedQualityUi { 0 };   // phrase-quality gate discards - see Docs SS20
+    std::atomic<float> lastPhraseInterestUi { -1.0f };     // most recent phrase's own 0-100% interest score
 
     juce::int64 nextNoteSeq = 1;      // 0 never issued, matches OrchPiano's own convention
     int nextPhraseId = 0;
@@ -132,6 +137,15 @@ private:
     // bound rather than the literal amount used - see
     // odly::resolveRandomTransposeSemitones.
     void resolveAndScheduleTransform (odly::Phrase& phrase, int transposeSemitones);
+
+    // Shared by all 3 closure sites (capture-triggered, checkPhraseTimeout,
+    // stop-triggered): checks `closed` against the Minimum Interest gate
+    // (odly::computePhraseInterest, Docs SS20) and either schedules it
+    // normally (resolveAndScheduleTransform + push to pendingPhrases) or
+    // discards it silently, incrementing totalPhrasesSkippedQualityUi - the
+    // phrase was still captured and closed (already counted in
+    // totalPhrasesClosedUi by the caller), it just never gets echoed.
+    void scheduleClosedPhrase (odly::Phrase closed, int transposeSemitones);
 
     // Silences anything currently sounding from a prior firing AND clears
     // the tracking table, in one operation - see Docs SS2's stuck-note-

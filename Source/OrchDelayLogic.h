@@ -366,6 +366,21 @@ namespace odly
     TransformProposal proposeWeightedTransform (int instanceSeed, int phraseCounter, float restlessness,
                                                 const PhraseFeatures& features);
 
+    // --- Phrase-quality gate (see Docs SS20) ----------------------------------
+    // A 0..1 "worth answering" score for a captured phrase, from cheap,
+    // purely structural measurements - never a judgment about musical
+    // TASTE, just shape: a single note, or several notes all on the same
+    // repeated pitch, score near 0; a phrase with several DISTINCT pitches
+    // spanning a real melodic range scores near 1. Equal-weighted average
+    // of 3 factors: note count (ramps to 1.0 by ~6 notes - doesn't take
+    // much to feel "worth it"), pitch variety (distinct pitches / total
+    // notes - a repeated single pitch scores near 0 regardless of note
+    // count), and pitch spread (saturates at an octave). A phrase below the
+    // Minimum Interest threshold (default 0% = gate disabled) is captured
+    // and closed normally but never scheduled to echo at all - see
+    // OrchDelayProcessor's own scheduleClosedPhrase.
+    float computePhraseInterest (const std::vector<HeldNote>& notes);
+
     // Resolves the ACTUAL transpose amount to use when Random Transpose mode
     // is on: deterministic (same instanceSeed+phraseCounter -> same result,
     // reload-stable, same hash construction as proposeTransform but salt 3

@@ -34,6 +34,7 @@ OrchDelayAudioProcessor::OrchDelayAudioProcessor()
     intervalScalePercentParameter = parameters.getRawParameterValue ("intervalScalePercent");
     intervalRandomParameter = parameters.getRawParameterValue ("intervalRandom");
     contentAwareWeightingParameter = parameters.getRawParameterValue ("contentAwareWeighting");
+    minimumInterestParameter = parameters.getRawParameterValue ("minimumInterest");
     instanceSeedParameter = parameters.getRawParameterValue ("instanceSeed");
 }
 
@@ -64,6 +65,8 @@ void OrchDelayAudioProcessor::prepareToPlay (double newSampleRate, int samplesPe
     lastManualChoiceUi.store (-1);
     lastResolvedStretchPercentUi.store (-1.0f);
     totalPhrasesSkippedBusyUi.store (0);
+    totalPhrasesSkippedQualityUi.store (0);
+    lastPhraseInterestUi.store (-1.0f);
 }
 
 void OrchDelayAudioProcessor::releaseResources()
@@ -173,6 +176,23 @@ void OrchDelayAudioProcessor::resolveAndScheduleTransform (odly::Phrase& phrase,
     phrase.outputNotes = odly::buildOutputNotes (phrase, resolvedTransposeSemitones,
                                                  resolvedRotationSteps, resolvedLengthPercent,
                                                  resolvedStretchPercent, resolvedIntervalScalePercent);
+}
+
+void OrchDelayAudioProcessor::scheduleClosedPhrase (odly::Phrase closed, int transposeSemitones)
+{
+    const float minimumInterestPercent = minimumInterestParameter != nullptr
+        ? juce::jlimit (0.0f, 100.0f, minimumInterestParameter->load()) : 0.0f;
+    const float interestPercent = odly::computePhraseInterest (closed.notes) * 100.0f;
+    lastPhraseInterestUi.store (interestPercent);
+
+    if (interestPercent < minimumInterestPercent)
+    {
+        totalPhrasesSkippedQualityUi.fetch_add (1);
+        return;
+    }
+
+    resolveAndScheduleTransform (closed, transposeSemitones);
+    pendingPhrases.push_back (closed);
 }
 
 void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
@@ -313,9 +333,7 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
                 ++phraseCounter;
                 totalPhrasesClosedUi.fetch_add (1);
                 lastScheduledFirePpqUi.store (openPhrase.scheduledFirePpq);
-                odly::Phrase closed = openPhrase;
-                resolveAndScheduleTransform (closed, transposeSemitonesAtStop);
-                pendingPhrases.push_back (closed);
+                scheduleClosedPhrase (openPhrase, transposeSemitonesAtStop);
                 openPhrase = odly::Phrase {};
             }
         }
@@ -402,9 +420,7 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
                     ++phraseCounter;
                     totalPhrasesClosedUi.fetch_add (1);
                     lastScheduledFirePpqUi.store (result.closedPhrase.scheduledFirePpq);
-                    odly::Phrase closed = result.closedPhrase;
-                    resolveAndScheduleTransform (closed, transposeSemitones);
-                    pendingPhrases.push_back (closed);
+                    scheduleClosedPhrase (result.closedPhrase, transposeSemitones);
                 }
 
                 // The live note-on/off is swallowed into the buffer, never
@@ -425,9 +441,7 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
                 ++phraseCounter;
                 totalPhrasesClosedUi.fetch_add (1);
                 lastScheduledFirePpqUi.store (timeoutResult.closedPhrase.scheduledFirePpq);
-                odly::Phrase closed = timeoutResult.closedPhrase;
-                resolveAndScheduleTransform (closed, transposeSemitones);
-                pendingPhrases.push_back (closed);
+                scheduleClosedPhrase (timeoutResult.closedPhrase, transposeSemitones);
             }
         }
 
@@ -883,6 +897,28 @@ juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::cre
         juce::ParameterID { "contentAwareWeighting", 1 },
         "Content-Aware Weighting",
         true));
+
+    // Phrase-quality gate (see odly::computePhraseInterest / Docs SS20): a
+    // captured phrase below this 0-100% "worth answering" score is closed
+    // normally but never scheduled to echo at all. Default 0% = gate fully
+    // disabled (every phrase always echoes, today's original behavior) -
+    // unlike Content-Aware Weighting, this can actively discard material,
+    // so it stays opt-in rather than defaulting on.
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "minimumInterest", 1 },
+        "Minimum Interest",
+        juce::NormalisableRange<float> (0.0f, 100.0f, 1.0f),
+        0.0f,
+        juce::AudioParameterFloatAttributes()
+            .withLabel ("%")
+            .withStringFromValueFunction ([] (float value, int)
+            {
+                return juce::String (juce::roundToInt (value)) + "%";
+            })
+            .withValueFromStringFunction ([] (const juce::String& text)
+            {
+                return text.retainCharacters ("0123456789.").getFloatValue();
+            })));
 
     // This instance's own hash key for the restlessness proposal (see
     // odly::proposeTransform / fnv1aHash) - gives multiple OrchDelay

@@ -430,6 +430,33 @@ namespace odly
         return proposal;
     }
 
+    float computePhraseInterest (const std::vector<HeldNote>& notes)
+    {
+        if (notes.size() < 2)
+            return 0.0f;   // a single note is about as low-interest as it gets structurally
+
+        std::vector<int> pitches;
+        pitches.reserve (notes.size());
+        for (const auto& n : notes)
+            pitches.push_back (n.pitch);
+        std::sort (pitches.begin(), pitches.end());
+        const auto distinctCount = std::distance (pitches.begin(), std::unique (pitches.begin(), pitches.end()));
+
+        const float countFactor = juce::jlimit (0.0f, 1.0f, static_cast<float> (notes.size() - 1) / 5.0f);
+        const float varietyFactor = static_cast<float> (distinctCount) / static_cast<float> (notes.size());
+
+        int minPitch = notes.front().pitch;
+        int maxPitch = notes.front().pitch;
+        for (const auto& n : notes)
+        {
+            minPitch = juce::jmin (minPitch, n.pitch);
+            maxPitch = juce::jmax (maxPitch, n.pitch);
+        }
+        const float spreadFactor = juce::jlimit (0.0f, 1.0f, static_cast<float> (maxPitch - minPitch) / 12.0f);
+
+        return (countFactor + varietyFactor + spreadFactor) / 3.0f;
+    }
+
     int resolveRandomTransposeSemitones (int instanceSeed, int phraseCounter, int rangeSemitones)
     {
         const int bound = juce::jlimit (0, 48, rangeSemitones < 0 ? -rangeSemitones : rangeSemitones);

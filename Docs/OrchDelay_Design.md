@@ -660,5 +660,30 @@ actually matter here - three STATISTICAL bias-direction checks across large samp
 dense phrase picks Length more often than an otherwise-identical sparse one, a sparse phrase picks
 Stretch more often than an otherwise-identical dense one, and a wide-range phrase picks Inversion more
 often than an otherwise-identical narrow one - i.e. the bias actually points the intended direction,
-not just "the code runs." Rebuilt + reinstalled, Build ~17:26 UTC 2026-09-15. **Not yet live-tested**
-- required before calling this actually done, per this repo's own established discipline.
+not just "the code runs." Rebuilt + reinstalled, Build ~17:26 UTC 2026-09-15.
+
+**RESOLVED**: live-tested successfully. Moving on to item 3.
+
+### Phrase-quality gate
+
+`odly::computePhraseInterest(notes)` scores a captured phrase 0..1 on purely structural grounds -
+never a judgment about musical TASTE, just shape: equal-weighted average of note count (ramps to 1.0
+by ~6 notes - doesn't take much to feel "worth it"), pitch variety (distinct pitches / total notes -
+several repeats of one pitch scores near 0 regardless of note count), and pitch spread (saturates at
+an octave). A new `minimumInterest` parameter (0-100%, default 0% = gate fully disabled - unlike
+Content-Aware Weighting, this can actively DISCARD material, so it stays opt-in rather than
+defaulting on) is checked once per closure, in a new shared `scheduleClosedPhrase()` helper that now
+sits between all 3 closure sites (capture-triggered, `checkPhraseTimeout`, stop-triggered) and the
+actual scheduling - a phrase below threshold is still captured and closed (counted in the existing
+`totalPhrasesClosedUi`) but never gets an echo scheduled for it at all. This DRYs up code that had
+been triplicated at all 3 sites since SS9.
+
+New `totalPhrasesSkippedQualityUi` (`skipQ N`) and `lastPhraseInterestUi` (`interest N.N`) diagnostics
+in the status line, so the threshold can actually be tuned against real playing rather than guessed.
+
+12 new test assertions (136 total, all passing): `computePhraseInterest`'s edge cases (single
+note/empty phrase both score 0), and the comparisons that matter - a varied, spread-out phrase scores
+meaningfully higher than the identical note count repeated on one pitch, and a maximally rich phrase
+(enough notes, full variety, full spread) saturates at exactly 1.0. Rebuilt + reinstalled, Build
+~17:31 UTC 2026-09-15. **Not yet live-tested** - required before calling this actually done, per this
+repo's own established discipline.
