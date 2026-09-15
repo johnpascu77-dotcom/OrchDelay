@@ -15,7 +15,7 @@ namespace
 OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
-    setSize (520, 1076);
+    setSize (1040, 680);
 
     titleLabel.setText ("OrchDelay", juce::dontSendNotification);
     titleLabel.setJustificationType (juce::Justification::centred);
@@ -227,99 +227,114 @@ void OrchDelayAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds().reduced (16);
 
+    // Header spans the full width - shared by both columns below.
     titleLabel.setBounds (area.removeFromTop (40));
     subtitleLabel.setBounds (area.removeFromTop (22));
     buildLabel.setBounds (area.removeFromTop (18));
     area.removeFromTop (12);
 
     bypassButton.setBounds (area.removeFromTop (28));
-    area.removeFromTop (8);
+    area.removeFromTop (12);
 
-    auto row = [&area] (int height = 28) { return area.removeFromTop (height); };
+    // Status also spans the full width, pinned to the bottom.
+    auto statusArea = area.removeFromBottom (68);
+    area.removeFromBottom (12);
+    statusLabel.setBounds (statusArea);
 
-    captureModeLabel.setBounds (row (18));
-    captureModeBox.setBounds (row());
-    area.removeFromTop (8);
+    // Two columns for everything else - capture/timing on the left,
+    // transform on the right. The single-column layout grew too tall
+    // across this session's feature growth to fit a typical plugin window;
+    // split here per direct user request.
+    auto rightArea = area.removeFromRight ((area.getWidth() - 24) / 2);
+    area.removeFromRight (24);
+    auto& leftArea = area;
 
-    holdBarsLabel.setBounds (row (18));
-    auto holdBarsRow = row();
+    auto leftRow = [&leftArea] (int height = 28) { return leftArea.removeFromTop (height); };
+    auto rightRow = [&rightArea] (int height = 28) { return rightArea.removeFromTop (height); };
+
+    // --- Left column: capture & timing ---------------------------------
+    captureModeLabel.setBounds (leftRow (18));
+    captureModeBox.setBounds (leftRow());
+    leftArea.removeFromTop (8);
+
+    holdBarsLabel.setBounds (leftRow (18));
+    auto holdBarsRow = leftRow();
     holdBarsRandomButton.setBounds (holdBarsRow.removeFromRight (75));
     holdBarsRow.removeFromRight (8);
     holdBarsSlider.setBounds (holdBarsRow);
-    area.removeFromTop (8);
+    leftArea.removeFromTop (8);
 
-    overlapModeLabel.setBounds (row (18));
-    overlapModeBox.setBounds (row());
-    area.removeFromTop (8);
+    overlapModeLabel.setBounds (leftRow (18));
+    overlapModeBox.setBounds (leftRow());
+    leftArea.removeFromTop (8);
 
-    phraseGapLabel.setBounds (row (18));
-    phraseGapSlider.setBounds (row());
-    area.removeFromTop (8);
+    phraseGapLabel.setBounds (leftRow (18));
+    phraseGapSlider.setBounds (leftRow());
+    leftArea.removeFromTop (8);
 
-    minimumInterestLabel.setBounds (row (18));
-    minimumInterestSlider.setBounds (row());
-    area.removeFromTop (8);
+    minimumInterestLabel.setBounds (leftRow (18));
+    minimumInterestSlider.setBounds (leftRow());
+    leftArea.removeFromTop (8);
 
-    callbackProbabilityLabel.setBounds (row (18));
-    callbackProbabilitySlider.setBounds (row());
-    area.removeFromTop (8);
+    callbackProbabilityLabel.setBounds (leftRow (18));
+    callbackProbabilitySlider.setBounds (leftRow());
+    leftArea.removeFromTop (8);
 
-    restlessnessLabel.setBounds (row (18));
-    auto restlessnessRow = row();
+    instanceSeedLabel.setBounds (leftRow (18));
+    auto seedRow = leftRow();
+    randomizeSeedButton.setBounds (seedRow.removeFromRight (90));
+    seedRow.removeFromRight (8);
+    instanceSeedSlider.setBounds (seedRow);
+    leftArea.removeFromTop (8);
+
+    // --- Right column: transform -----------------------------------------
+    restlessnessLabel.setBounds (rightRow (18));
+    auto restlessnessRow = rightRow();
     contentAwareWeightingButton.setBounds (restlessnessRow.removeFromRight (110));
     restlessnessRow.removeFromRight (8);
     restlessnessSlider.setBounds (restlessnessRow);
-    area.removeFromTop (8);
+    rightArea.removeFromTop (8);
 
-    transformLabel.setBounds (row (18));
-    transformBox.setBounds (row());
-    area.removeFromTop (8);
+    transformLabel.setBounds (rightRow (18));
+    transformBox.setBounds (rightRow());
+    rightArea.removeFromTop (8);
 
-    transposeLabel.setBounds (row (18));
-    auto transposeRow = row();
+    transposeLabel.setBounds (rightRow (18));
+    auto transposeRow = rightRow();
     transposeRandomButton.setBounds (transposeRow.removeFromRight (90));
     transposeRow.removeFromRight (8);
     transposeSlider.setBounds (transposeRow);
-    area.removeFromTop (8);
+    rightArea.removeFromTop (8);
 
-    rotationLabel.setBounds (row (18));
-    auto rotationRow = row();
+    rotationLabel.setBounds (rightRow (18));
+    auto rotationRow = rightRow();
     rotationRandomButton.setBounds (rotationRow.removeFromRight (90));
     rotationRow.removeFromRight (8);
     rotationSlider.setBounds (rotationRow);
-    area.removeFromTop (8);
+    rightArea.removeFromTop (8);
 
-    lengthLabel.setBounds (row (18));
-    auto lengthRow = row();
+    lengthLabel.setBounds (rightRow (18));
+    auto lengthRow = rightRow();
     lengthRandomButton.setBounds (lengthRow.removeFromRight (90));
     lengthRow.removeFromRight (8);
     lengthSlider.setBounds (lengthRow);
-    area.removeFromTop (8);
+    rightArea.removeFromTop (8);
 
-    stretchLabel.setBounds (row (18));
-    auto stretchRow = row();
+    stretchLabel.setBounds (rightRow (18));
+    auto stretchRow = rightRow();
     stretchQuantizedButton.setBounds (stretchRow.removeFromRight (85));
     stretchRow.removeFromRight (6);
     stretchRandomButton.setBounds (stretchRow.removeFromRight (75));
     stretchRow.removeFromRight (8);
     stretchSlider.setBounds (stretchRow);
-    area.removeFromTop (8);
+    rightArea.removeFromTop (8);
 
-    intervalLabel.setBounds (row (18));
-    auto intervalRow = row();
+    intervalLabel.setBounds (rightRow (18));
+    auto intervalRow = rightRow();
     intervalRandomButton.setBounds (intervalRow.removeFromRight (75));
     intervalRow.removeFromRight (8);
     intervalSlider.setBounds (intervalRow);
-    area.removeFromTop (8);
-
-    instanceSeedLabel.setBounds (row (18));
-    auto seedRow = row();
-    randomizeSeedButton.setBounds (seedRow.removeFromRight (90));
-    seedRow.removeFromRight (8);
-    instanceSeedSlider.setBounds (seedRow);
-    area.removeFromTop (12);
-
-    statusLabel.setBounds (row (68));
+    rightArea.removeFromTop (8);
 }
 
 void OrchDelayAudioProcessorEditor::timerCallback()

@@ -777,3 +777,23 @@ unit-tested - the same known-gap category as every other real-time-state mechani
 reinstalled, Build ~18:19 UTC 2026-09-15. **Not yet live-tested** - required before calling this
 actually done, per this repo's own established discipline. This closes out all 5 items of the
 "second list" (SS18-SS22) pending live confirmation of this last one.
+
+**RESOLVED**: live-tested successfully ("they are working fine").
+
+## SS23. Two-column editor layout - the single column grew too tall
+
+Across this session's feature growth (v1's original 7 controls to v1.1's full second-list expansion),
+the editor grew from `520x640` to `520x1076` as a single vertical column - past what fits in a typical
+plugin window on the user's own screen; the bottom controls (Instance Seed, Randomize, the status
+line) were being clipped with no way to scroll to them. User's own direct request: split it, put the
+"lower half" beside the upper half instead of below it.
+
+Restructured `resized()` into a shared full-width header (title/subtitle/build/Bypass) and a
+shared full-width status line at the bottom, with everything else split into two side-by-side
+columns: **left = capture & timing** (Capture Mode, Hold Bars, Overlap Mode, Phrase Gap, Minimum
+Interest, Callback Probability, Instance Seed) and **right = transform** (Restlessness, Transform
+choice, and all 5 amount sliders - Transpose/Rotation/Length/Stretch/Interval). Both columns land at
+almost exactly the same height (7 rows each, 54px per row) by construction, not by tuning - the
+grouping happened to split evenly. Window resized to `1040x680` - shorter than the single-column
+peak, and only modestly wider than before. Purely a layout change; no parameter, logic, or test
+changes. Rebuilt + reinstalled, Build ~18:44 UTC 2026-09-15.
