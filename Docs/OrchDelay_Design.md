@@ -797,3 +797,62 @@ almost exactly the same height (7 rows each, 54px per row) by construction, not 
 grouping happened to split evenly. Window resized to `1040x680` - shorter than the single-column
 peak, and only modestly wider than before. Purely a layout change; no parameter, logic, or test
 changes. Rebuilt + reinstalled, Build ~18:44 UTC 2026-09-15.
+
+**RESOLVED**: user confirmed everything landed and is visible.
+
+## SS24. Autonomous Fire - the device can free-run off its own memory
+
+Prompted by the user's own live discovery: a cascading 4-track network (each track's OrchDelay
+output feeding the next, 1→2→3→4→1) sustaining itself from a single kick-start motive - but, as the
+user put it, "each one has to wait for the feeding phrase, then wait to fire, even when the pool is
+full of phrases that could be fired independently of a new material." Correct diagnosis: OrchDelay
+was, until this item, 100% reactive - the memory bank (SS21) only ever decides WHAT CONTENT an echo
+uses, never WHETHER to fire one at all without a freshly-closed phrase to trigger it. If any single
+link in a chained rig goes quiet (a phrase skipped by the quality gate, discarded by Overlap Mode's
+Skip, etc.), the whole network could stall, since nothing else would ever prompt the next track.
+
+**Autonomous Fire** (`autonomousFireBars`, 0-16, default 0 = off) lets the device fire from its own
+memory pool on its OWN clock, entirely independent of new incoming MIDI, once seeded with at least
+one real captured phrase - the "feed each track once, then let it free-run" workflow the user
+described directly.
+
+Mechanics (`checkAutonomousFire`, called once per playing block, deliberately OUTSIDE the Hold-
+Bars-pause gate - see below): a self-sustaining "every N bars" clock, armed the first time the pool
+has ≥1 entry (`autonomousFireArmed`/`nextAutonomousFirePpq`), re-armed fresh (not resumed from a
+stale schedule) after a genuine rewind, since "now" moved. Each tick draws a pool index via
+`odly::resolveAutonomousFireIndex` - same uniform-random selection philosophy as
+`resolveMemoryCallback`'s own draw, but keyed by a dedicated `autonomousFireCounter` (there's no
+just-closed phrase to tie a `phraseCounter` value to) and its own salt (13), independent of every
+other seeded draw here - then builds and schedules a `Phrase` directly from that pool entry via the
+same `resolveAndScheduleTransform` every other closure path already uses, firing essentially
+immediately (this tick IS the fire moment, not "N bars from here" - the interval itself already
+governs cadence).
+
+**Deliberately independent of Hold Bars' own pause state** (SS17's `Hold Bars=0`): Autonomous Fire
+fires from EXISTING pool content, not from newly-captured material, so pausing capture ("stop
+listening for new phrases") and Autonomous Fire ("keep echoing what I already have") are treated as
+orthogonal controls, not coupled - matches the user's own "seed once, then let it run" framing, where
+you'd plausibly want to stop capturing NEW input while the device keeps developing what it already
+has.
+
+**Deliberately reuses the existing pipeline rather than adding a parallel one**: an autonomously-fired
+phrase becomes a normal `pendingPhrases` entry, so Overlap Mode (SS17), the transform-choice logic
+(manual or Content-Aware-Weighted, SS19), and the fire/note-off loops all apply to it exactly as they
+would to any other phrase, with zero special-casing anywhere else in the codebase. `phraseCounter`
+(shared with real closures, not a separate counter) still drives transform-choice hashing, so
+autonomous and real-triggered echoes draw from the same evolving hash sequence rather than two
+disconnected ones.
+
+New `totalAutonomousFiresUi` (`autofire N`) diagnostic. Editor gained an "Autonomous Fire (bars)"
+slider in the left (capture & timing) column; window height 680→700 to fit (the left column is now
+one row taller than the right, no longer perfectly balanced).
+
+5 new test assertions (153 total, all passing): `resolveAutonomousFireIndex`'s edge case (empty pool
+→ -1), determinism, index bounds, spread across the whole pool, and independence from
+`resolveMemoryCallback`'s own index draw (different salts). The actual clock-arming/ticking mechanics
+live in the processor (real-time ppq state) and aren't unit-tested - the same known-gap category as
+every other real-time-state mechanism in this plugin. Rebuilt + reinstalled, Build ~21:12 UTC
+2026-09-15. **Not yet live-tested** - required before calling this actually done, per this repo's own
+established discipline. This is the first of what the user has signaled will be a longer discussion
+about the memory pool's own selection strategy (recency-weighting, generation-tagging for section
+changes) and inter-instance coordination - not yet reflected in any design decision here.

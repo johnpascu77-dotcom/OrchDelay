@@ -15,7 +15,7 @@ namespace
 OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
-    setSize (1040, 680);
+    setSize (1040, 700);
 
     titleLabel.setText ("OrchDelay", juce::dontSendNotification);
     titleLabel.setJustificationType (juce::Justification::centred);
@@ -103,6 +103,10 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     setupLabel (callbackProbabilityLabel, "Callback Probability");
     addAndMakeVisible (callbackProbabilityLabel);
     setupSlider (callbackProbabilitySlider);
+
+    setupLabel (autonomousFireLabel, "Autonomous Fire (bars)");
+    addAndMakeVisible (autonomousFireLabel);
+    setupSlider (autonomousFireSlider);
 
     setupLabel (restlessnessLabel, "Restlessness");
     addAndMakeVisible (restlessnessLabel);
@@ -193,6 +197,7 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     phraseGapAttachment = std::make_unique<SliderAttachment> (state, "phraseGapBeats", phraseGapSlider);
     minimumInterestAttachment = std::make_unique<SliderAttachment> (state, "minimumInterest", minimumInterestSlider);
     callbackProbabilityAttachment = std::make_unique<SliderAttachment> (state, "callbackProbability", callbackProbabilitySlider);
+    autonomousFireAttachment = std::make_unique<SliderAttachment> (state, "autonomousFireBars", autonomousFireSlider);
     restlessnessAttachment = std::make_unique<SliderAttachment> (state, "restlessness", restlessnessSlider);
     contentAwareWeightingAttachment = std::make_unique<ButtonAttachment> (state, "contentAwareWeighting", contentAwareWeightingButton);
     transformAttachment = std::make_unique<ComboBoxAttachment> (state, "manualTransform", transformBox);
@@ -278,6 +283,10 @@ void OrchDelayAudioProcessorEditor::resized()
 
     callbackProbabilityLabel.setBounds (leftRow (18));
     callbackProbabilitySlider.setBounds (leftRow());
+    leftArea.removeFromTop (8);
+
+    autonomousFireLabel.setBounds (leftRow (18));
+    autonomousFireSlider.setBounds (leftRow());
     leftArea.removeFromTop (8);
 
     instanceSeedLabel.setBounds (leftRow (18));
@@ -369,6 +378,7 @@ void OrchDelayAudioProcessorEditor::timerCallback()
                          juce::String (audioProcessor.lastResolvedStretchPercentForUi(), 1) + "\nskipQ " +
                          juce::String (audioProcessor.skippedQualityForUi()) + " interest " +
                          juce::String (audioProcessor.lastPhraseInterestForUi(), 1) + " callbacks " +
-                         juce::String (audioProcessor.memoryCallbacksForUi()),
+                         juce::String (audioProcessor.memoryCallbacksForUi()) + " autofire " +
+                         juce::String (audioProcessor.autonomousFiresForUi()),
                          juce::dontSendNotification);
 }

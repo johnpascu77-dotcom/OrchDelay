@@ -611,6 +611,30 @@ int main()
         check (odly::isOutsideActiveRange (active, 68), "isOutsideActiveRange: one semitone above the high boundary IS outside");
     }
 
+    // --- resolveAutonomousFireIndex: uniform pool pick, no probability gate ---
+    {
+        check (odly::resolveAutonomousFireIndex (5, 3, 0) == -1,
+              "resolveAutonomousFireIndex: an empty pool always resolves to -1");
+
+        const int a = odly::resolveAutonomousFireIndex (5, 3, 8);
+        const int b = odly::resolveAutonomousFireIndex (5, 3, 8);
+        check (a == b, "resolveAutonomousFireIndex: identical inputs always produce identical outputs (determinism)");
+        check (a >= 0 && a < 8, "resolveAutonomousFireIndex: poolIndex always lands within [0, poolSize)");
+
+        bool sawLowIndex = false, sawHighIndex = false;
+        for (int i = 0; i < 4000; ++i)
+        {
+            const int idx = odly::resolveAutonomousFireIndex (11, i, 8);
+            if (idx <= 2) sawLowIndex = true;
+            if (idx >= 5) sawHighIndex = true;
+        }
+        check (sawLowIndex && sawHighIndex, "resolveAutonomousFireIndex: poolIndex spreads across the whole pool, not clustered at one end");
+
+        check (odly::resolveAutonomousFireIndex (5, 3, 8) != odly::resolveMemoryCallback (5, 3, 100.0f, 8).poolIndex
+              || odly::resolveAutonomousFireIndex (5, 4, 8) != odly::resolveMemoryCallback (5, 4, 100.0f, 8).poolIndex,
+              "resolveAutonomousFireIndex: uses its own salt, independent of resolveMemoryCallback's own index draw");
+    }
+
     // --- resolveRandomTransposeSemitones: deterministic, ranged, symmetric ---
     {
         const int a = odly::resolveRandomTransposeSemitones (5, 3, 12);

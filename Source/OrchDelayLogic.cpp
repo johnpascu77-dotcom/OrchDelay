@@ -489,6 +489,15 @@ namespace odly
         return decision;
     }
 
+    int resolveAutonomousFireIndex (int instanceSeed, int autonomousFireCounter, int poolSize)
+    {
+        if (poolSize <= 0)
+            return -1;
+
+        const juce::uint32 h = fnv1aHash (instanceSeed, autonomousFireCounter, 13);   // salt 13
+        return static_cast<int> (h % static_cast<juce::uint32> (poolSize));
+    }
+
     int resolveRandomTransposeSemitones (int instanceSeed, int phraseCounter, int rangeSemitones)
     {
         const int bound = juce::jlimit (0, 48, rangeSemitones < 0 ? -rangeSemitones : rangeSemitones);

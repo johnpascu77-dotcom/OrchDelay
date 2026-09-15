@@ -444,6 +444,18 @@ namespace odly
     MemoryCallbackDecision resolveMemoryCallback (int instanceSeed, int phraseCounter,
                                                   float callbackProbabilityPercent, int poolSize);
 
+    // --- Autonomous Fire (see Docs SS24) --------------------------------------
+    // Picks which pool index an AUTONOMOUS fire should use - uniform at
+    // random across the whole pool, same selection philosophy as
+    // resolveMemoryCallback's own poolIndex draw, but keyed by a separate
+    // `autonomousFireCounter` (there's no just-closed phrase to tie a
+    // phraseCounter value to - an autonomous fire isn't triggered by one).
+    // No probability gate needed here, unlike resolveMemoryCallback: the
+    // fire INTERVAL itself already controls frequency, this only decides
+    // WHICH pool entry each tick uses. Returns -1 if poolSize<=0 (nothing
+    // to fire). Salt 13, independent of every other seeded draw here.
+    int resolveAutonomousFireIndex (int instanceSeed, int autonomousFireCounter, int poolSize);
+
     // Resolves the ACTUAL transpose amount to use when Random Transpose mode
     // is on: deterministic (same instanceSeed+phraseCounter -> same result,
     // reload-stable, same hash construction as proposeTransform but salt 3

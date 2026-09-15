@@ -66,6 +66,7 @@ public:
     int skippedQualityForUi() const { return totalPhrasesSkippedQualityUi.load(); }
     float lastPhraseInterestForUi() const { return lastPhraseInterestUi.load(); }
     int memoryCallbacksForUi() const { return totalMemoryCallbacksUi.load(); }
+    int autonomousFiresForUi() const { return totalAutonomousFiresUi.load(); }
 
     // "Randomize" button target - writes through the normal parameter path
     // (undoable, saved in state), never a bare non-parameter side value.
@@ -96,6 +97,7 @@ private:
     std::atomic<float>* minimumInterestParameter = nullptr;
     std::atomic<float>* callbackProbabilityParameter = nullptr;
     std::atomic<float>* captureModeParameter = nullptr;
+    std::atomic<float>* autonomousFireBarsParameter = nullptr;
     std::atomic<float>* instanceSeedParameter = nullptr;
 
     double sampleRate = 44100.0;
@@ -120,6 +122,7 @@ private:
     std::atomic<int> totalPhrasesSkippedQualityUi { 0 };   // phrase-quality gate discards - see Docs SS20
     std::atomic<float> lastPhraseInterestUi { -1.0f };     // most recent phrase's own 0-100% interest score
     std::atomic<int> totalMemoryCallbacksUi { 0 };   // times an OLDER phrase was echoed instead - Docs SS21
+    std::atomic<int> totalAutonomousFiresUi { 0 };   // times the device fired on its own clock - Docs SS24
 
     juce::int64 nextNoteSeq = 1;      // 0 never issued, matches OrchPiano's own convention
     int nextPhraseId = 0;
@@ -145,6 +148,13 @@ private:
     // activeFiredNotes.
     std::array<std::array<bool, 128>, 17> passthroughHeld {};
 
+    // Autonomous Fire (see Docs SS24): lets the device fire from its own
+    // memory pool on its own clock, entirely independent of new incoming
+    // MIDI, once seeded with at least one real captured phrase.
+    bool autonomousFireArmed = false;
+    double nextAutonomousFirePpq = 0.0;
+    int autonomousFireCounter = 0;   // separate from phraseCounter - see resolveAutonomousFireIndex's own doc
+
     // Resolves the manual/proposed transform choice for a just-closed phrase
     // and builds its outputNotes (odly::buildOutputNotes) - each note's own
     // independent, absolute output onset/off time, computed once here so
@@ -167,6 +177,15 @@ private:
     // phrase was still captured and closed (already counted in
     // totalPhrasesClosedUi by the caller), it just never gets echoed.
     void scheduleClosedPhrase (odly::Phrase closed, int transposeSemitones);
+
+    // Checked once per playing block, after the normal capture/closure
+    // logic: if Autonomous Fire is on (autonomousFireBars > 0) and the
+    // memory pool has at least one entry, arms a self-sustaining "every N
+    // bars" clock on first use, then fires a pool phrase each time it
+    // ticks - entirely independent of whether anything new has arrived.
+    // See Docs SS24.
+    void checkAutonomousFire (double blockStartPpq, double blockEndPpq, double beatsPerBarNow,
+                              int transposeSemitones);
 
     // Silences anything currently sounding from a prior firing AND clears
     // the tracking table, in one operation - see Docs SS2's stuck-note-

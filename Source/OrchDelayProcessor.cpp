@@ -37,6 +37,7 @@ OrchDelayAudioProcessor::OrchDelayAudioProcessor()
     minimumInterestParameter = parameters.getRawParameterValue ("minimumInterest");
     callbackProbabilityParameter = parameters.getRawParameterValue ("callbackProbability");
     captureModeParameter = parameters.getRawParameterValue ("captureMode");
+    autonomousFireBarsParameter = parameters.getRawParameterValue ("autonomousFireBars");
     instanceSeedParameter = parameters.getRawParameterValue ("instanceSeed");
 }
 
@@ -51,6 +52,9 @@ void OrchDelayAudioProcessor::prepareToPlay (double newSampleRate, int samplesPe
     phraseMemory.clear();
     for (auto& channelRow : passthroughHeld)
         channelRow.fill (false);
+    autonomousFireArmed = false;
+    nextAutonomousFirePpq = 0.0;
+    autonomousFireCounter = 0;
     nextNoteSeq = 1;
     nextPhraseId = 0;
     phraseCounter = 0;
@@ -73,6 +77,7 @@ void OrchDelayAudioProcessor::prepareToPlay (double newSampleRate, int samplesPe
     totalPhrasesSkippedQualityUi.store (0);
     lastPhraseInterestUi.store (-1.0f);
     totalMemoryCallbacksUi.store (0);
+    totalAutonomousFiresUi.store (0);
 }
 
 void OrchDelayAudioProcessor::releaseResources()
@@ -243,6 +248,63 @@ void OrchDelayAudioProcessor::scheduleClosedPhrase (odly::Phrase closed, int tra
 
     resolveAndScheduleTransform (toSchedule, transposeSemitones);
     pendingPhrases.push_back (toSchedule);
+}
+
+void OrchDelayAudioProcessor::checkAutonomousFire (double blockStartPpq, double blockEndPpq,
+                                                   double beatsPerBarNow, int transposeSemitones)
+{
+    const int autonomousFireBars = autonomousFireBarsParameter != nullptr
+        ? juce::jlimit (0, 16, juce::roundToInt (autonomousFireBarsParameter->load())) : 0;
+
+    if (autonomousFireBars <= 0 || phraseMemory.empty())
+    {
+        autonomousFireArmed = false;   // off, or nothing to fire yet - re-arm fresh whenever this becomes usable
+        return;
+    }
+
+    const double intervalPpq = static_cast<double> (autonomousFireBars) * beatsPerBarNow;
+
+    if (! autonomousFireArmed)
+    {
+        // First usable block since being (re-)armed - the clock starts
+        // ticking from here, not from some earlier moment before Autonomous
+        // Fire had anything to draw from.
+        nextAutonomousFirePpq = blockEndPpq + intervalPpq;
+        autonomousFireArmed = true;
+        return;
+    }
+
+    if (blockEndPpq < nextAutonomousFirePpq)
+        return;   // not due yet
+
+    const int instanceSeed = instanceSeedParameter != nullptr
+        ? juce::jlimit (0, 127, juce::roundToInt (instanceSeedParameter->load())) : 0;
+    const int poolIndex = odly::resolveAutonomousFireIndex (instanceSeed, autonomousFireCounter,
+                                                             static_cast<int> (phraseMemory.size()));
+    ++autonomousFireCounter;
+
+    // Re-arm for the next tick regardless of whether poolIndex somehow came
+    // back invalid (shouldn't happen given the empty-pool guard above, but
+    // never leave the clock silently stalled).
+    nextAutonomousFirePpq = blockEndPpq + intervalPpq;
+
+    if (poolIndex < 0 || poolIndex >= static_cast<int> (phraseMemory.size()))
+        return;
+
+    const auto& memory = phraseMemory[static_cast<size_t> (poolIndex)];
+    odly::Phrase autoPhrase;
+    autoPhrase.notes = memory.notes;
+    autoPhrase.phraseStartPpq = memory.phraseStartPpq;
+    autoPhrase.phraseEndPpq = memory.phraseEndPpq;
+    autoPhrase.closed = true;
+    // This tick IS the fire moment - not "N bars from here," Autonomous
+    // Fire's own interval already governs the cadence.
+    autoPhrase.scheduledFirePpq = blockStartPpq;
+
+    ++phraseCounter;   // shared with real closures - see resolveAndScheduleTransform's own use of it
+    totalAutonomousFiresUi.fetch_add (1);
+    resolveAndScheduleTransform (autoPhrase, transposeSemitones);
+    pendingPhrases.push_back (autoPhrase);
 }
 
 void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
@@ -417,6 +479,13 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         openPhrase = odly::Phrase {};
         pendingPhrases.clear();
         drainAndSilence (output, 0);
+
+        // Disarm Autonomous Fire's own clock - a genuine backward jump
+        // means "now" moved, so the next check should re-arm fresh from
+        // wherever the timeline actually is, rather than firing (or
+        // staying stale-silent) against a schedule computed before the
+        // jump - see Docs SS24.
+        autonomousFireArmed = false;
     }
 
     if (playing)
@@ -528,6 +597,12 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
                 scheduleClosedPhrase (timeoutResult.closedPhrase, transposeSemitones);
             }
         }
+
+        // Autonomous Fire (see Docs SS24) - deliberately OUTSIDE the
+        // baseHoldBars>0 gate above: it fires from the EXISTING memory
+        // pool, not from newly-captured material, so it stays independent
+        // of whether the device is currently "listening" for new phrases.
+        checkAutonomousFire (blockStartPpq, blockEndPpq, beatsPerBarNow, transposeSemitones);
 
         furthestBlockPpqUi.store (blockEndPpq);
 
@@ -784,6 +859,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::cre
         "Capture Mode",
         juce::StringArray { "Replace", "Overlay", "Duck" },
         0));
+
+    // Lets the device fire from its own memory pool on its own clock,
+    // entirely independent of new incoming MIDI, once seeded with at least
+    // one real captured phrase (see odly::resolveAutonomousFireIndex /
+    // Docs SS24). 0 = off (default) - the device stays purely reactive,
+    // today's original behavior.
+    params.push_back (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { "autonomousFireBars", 1 },
+        "Autonomous Fire (bars)",
+        0, 16, 0));
 
     // The core "how far in the future" control - the whole point of the
     // device. 0 is a dedicated "pause capturing" state (see Docs SS17) -
