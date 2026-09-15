@@ -38,6 +38,8 @@ OrchDelayAudioProcessor::OrchDelayAudioProcessor()
     callbackProbabilityParameter = parameters.getRawParameterValue ("callbackProbability");
     captureModeParameter = parameters.getRawParameterValue ("captureMode");
     autonomousFireBarsParameter = parameters.getRawParameterValue ("autonomousFireBars");
+    captureBankParameter = parameters.getRawParameterValue ("captureBank");
+    activeBankParameter = parameters.getRawParameterValue ("activeBank");
     instanceSeedParameter = parameters.getRawParameterValue ("instanceSeed");
 }
 
@@ -49,7 +51,9 @@ void OrchDelayAudioProcessor::prepareToPlay (double newSampleRate, int samplesPe
     openPhrase = odly::Phrase {};
     pendingPhrases.clear();
     activeFiredNotes.clear();
-    phraseMemory.clear();
+    for (auto& bank : phraseMemoryBanks)
+        bank.clear();
+    clearCaptureBankRequested.store (false);
     for (auto& channelRow : passthroughHeld)
         channelRow.fill (false);
     autonomousFireArmed = false;
@@ -221,14 +225,26 @@ void OrchDelayAudioProcessor::scheduleClosedPhrase (odly::Phrase closed, int tra
         ? juce::jlimit (0, 127, juce::roundToInt (instanceSeedParameter->load())) : 0;
     const float callbackProbabilityPercent = callbackProbabilityParameter != nullptr
         ? juce::jlimit (0.0f, 100.0f, callbackProbabilityParameter->load()) : 0.0f;
+
+    // Capture Bank / Active Bank (see Docs SS25): callbacks always read from
+    // whichever bank Active Bank points to, but what was ACTUALLY played is
+    // always remembered into whichever bank Capture Bank points to - these
+    // are deliberately independent selectors, not one shared knob.
+    const int captureBankIndex = captureBankParameter != nullptr
+        ? juce::jlimit (0, kPhraseMemoryBankCount - 1, juce::roundToInt (captureBankParameter->load())) : 0;
+    const int activeBankIndex = activeBankParameter != nullptr
+        ? juce::jlimit (0, kPhraseMemoryBankCount - 1, juce::roundToInt (activeBankParameter->load())) : 0;
+    auto& readBank = phraseMemoryBanks[static_cast<size_t> (activeBankIndex)];
+    auto& writeBank = phraseMemoryBanks[static_cast<size_t> (captureBankIndex)];
+
     const auto decision = odly::resolveMemoryCallback (instanceSeed, phraseCounter, callbackProbabilityPercent,
-                                                        static_cast<int> (phraseMemory.size()));
+                                                        static_cast<int> (readBank.size()));
 
     odly::Phrase toSchedule = closed;
     if (decision.useCallback && decision.poolIndex >= 0
-        && decision.poolIndex < static_cast<int> (phraseMemory.size()))
+        && decision.poolIndex < static_cast<int> (readBank.size()))
     {
-        const auto& memory = phraseMemory[static_cast<size_t> (decision.poolIndex)];
+        const auto& memory = readBank[static_cast<size_t> (decision.poolIndex)];
         toSchedule.notes = memory.notes;
         toSchedule.phraseStartPpq = memory.phraseStartPpq;
         toSchedule.phraseEndPpq = memory.phraseEndPpq;
@@ -242,9 +258,9 @@ void OrchDelayAudioProcessor::scheduleClosedPhrase (odly::Phrase closed, int tra
     entry.notes = closed.notes;
     entry.phraseStartPpq = closed.phraseStartPpq;
     entry.phraseEndPpq = closed.phraseEndPpq;
-    phraseMemory.push_back (entry);
-    if (phraseMemory.size() > static_cast<size_t> (kMaxPhraseMemorySize))
-        phraseMemory.erase (phraseMemory.begin());
+    writeBank.push_back (entry);
+    if (writeBank.size() > static_cast<size_t> (kMaxPhraseMemorySize))
+        writeBank.erase (writeBank.begin());
 
     resolveAndScheduleTransform (toSchedule, transposeSemitones);
     pendingPhrases.push_back (toSchedule);
@@ -256,7 +272,14 @@ void OrchDelayAudioProcessor::checkAutonomousFire (double blockStartPpq, double 
     const int autonomousFireBars = autonomousFireBarsParameter != nullptr
         ? juce::jlimit (0, 16, juce::roundToInt (autonomousFireBarsParameter->load())) : 0;
 
-    if (autonomousFireBars <= 0 || phraseMemory.empty())
+    // Autonomous Fire always draws from Active Bank (see Docs SS25) - the
+    // same bank Callback Probability reads from, so switching Active Bank
+    // redirects both mechanisms together.
+    const int activeBankIndex = activeBankParameter != nullptr
+        ? juce::jlimit (0, kPhraseMemoryBankCount - 1, juce::roundToInt (activeBankParameter->load())) : 0;
+    auto& activeBank = phraseMemoryBanks[static_cast<size_t> (activeBankIndex)];
+
+    if (autonomousFireBars <= 0 || activeBank.empty())
     {
         autonomousFireArmed = false;   // off, or nothing to fire yet - re-arm fresh whenever this becomes usable
         return;
@@ -280,7 +303,7 @@ void OrchDelayAudioProcessor::checkAutonomousFire (double blockStartPpq, double 
     const int instanceSeed = instanceSeedParameter != nullptr
         ? juce::jlimit (0, 127, juce::roundToInt (instanceSeedParameter->load())) : 0;
     const int poolIndex = odly::resolveAutonomousFireIndex (instanceSeed, autonomousFireCounter,
-                                                             static_cast<int> (phraseMemory.size()));
+                                                             static_cast<int> (activeBank.size()));
     ++autonomousFireCounter;
 
     // Re-arm for the next tick regardless of whether poolIndex somehow came
@@ -288,10 +311,10 @@ void OrchDelayAudioProcessor::checkAutonomousFire (double blockStartPpq, double 
     // never leave the clock silently stalled).
     nextAutonomousFirePpq = blockEndPpq + intervalPpq;
 
-    if (poolIndex < 0 || poolIndex >= static_cast<int> (phraseMemory.size()))
+    if (poolIndex < 0 || poolIndex >= static_cast<int> (activeBank.size()))
         return;
 
-    const auto& memory = phraseMemory[static_cast<size_t> (poolIndex)];
+    const auto& memory = activeBank[static_cast<size_t> (poolIndex)];
     odly::Phrase autoPhrase;
     autoPhrase.notes = memory.notes;
     autoPhrase.phraseStartPpq = memory.phraseStartPpq;
@@ -311,6 +334,17 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
 {
     buffer.clear();
     const int numSamples = buffer.getNumSamples();
+
+    // "Clear Bank" was pressed on the message thread since the last block -
+    // perform the actual clear here, on the audio thread, against whichever
+    // bank Capture Bank is set to RIGHT NOW (see requestClearCaptureBank's
+    // own doc comment for why this can't just happen directly from the UI).
+    if (clearCaptureBankRequested.exchange (false))
+    {
+        const int captureBankIndex = captureBankParameter != nullptr
+            ? juce::jlimit (0, kPhraseMemoryBankCount - 1, juce::roundToInt (captureBankParameter->load())) : 0;
+        phraseMemoryBanks[static_cast<size_t> (captureBankIndex)].clear();
+    }
 
     bool playing = false;
     bool havePpq = false;
@@ -838,6 +872,13 @@ void OrchDelayAudioProcessor::randomizeInstanceSeed()
         p->setValueNotifyingHost (juce::Random::getSystemRandom().nextFloat());
 }
 
+void OrchDelayAudioProcessor::requestClearCaptureBank()
+{
+    // Just raises a flag - see this method's own doc comment in the header
+    // for why the actual clear has to happen on the audio thread instead.
+    clearCaptureBankRequested.store (true);
+}
+
 juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::createParameterLayout()
 {
     std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
@@ -869,6 +910,27 @@ juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::cre
         juce::ParameterID { "autonomousFireBars", 1 },
         "Autonomous Fire (bars)",
         0, 16, 0));
+
+    // Multi-bank memory (see Docs SS25): 3 independent pools (A/B/C), like a
+    // development section where material from different sections is built up
+    // separately, then mixed in. Deliberately DECOUPLED from Active Bank
+    // below - lets you keep playing from one bank while building up new
+    // material in another via a different capture MIDI clip, then switch
+    // over by changing Active Bank alone.
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "captureBank", 1 },
+        "Capture Bank",
+        juce::StringArray { "A", "B", "C" },
+        0));
+
+    // Which bank Callback Probability and Autonomous Fire draw from. Kept
+    // separate from Capture Bank above on purpose - see this block's own
+    // comment for why.
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "activeBank", 1 },
+        "Active Bank",
+        juce::StringArray { "A", "B", "C" },
+        0));
 
     // The core "how far in the future" control - the whole point of the
     // device. 0 is a dedicated "pause capturing" state (see Docs SS17) -

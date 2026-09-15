@@ -852,7 +852,66 @@ one row taller than the right, no longer perfectly balanced).
 `resolveMemoryCallback`'s own index draw (different salts). The actual clock-arming/ticking mechanics
 live in the processor (real-time ppq state) and aren't unit-tested - the same known-gap category as
 every other real-time-state mechanism in this plugin. Rebuilt + reinstalled, Build ~21:12 UTC
-2026-09-15. **Not yet live-tested** - required before calling this actually done, per this repo's own
-established discipline. This is the first of what the user has signaled will be a longer discussion
-about the memory pool's own selection strategy (recency-weighting, generation-tagging for section
-changes) and inter-instance coordination - not yet reflected in any design decision here.
+2026-09-15. **RESOLVED** - user confirmed live: "It works." Two follow-ups came directly out of that
+test, both addressed in SS25 below: an empty-pool command (testing new ideas required an app
+restart otherwise), and multi-bank memory (this section's own closing note about pool-selection
+strategy and section changes). The "shared clock/signal" for inter-instance coordination remains
+open, deliberately deferred to its own future conversation (see SS25's own closing note).
+
+## SS25. Clear Bank + multi-bank memory (A/B/C) - a development-section workflow
+
+Directly prompted by the user's own live report right after confirming Autonomous Fire worked: "Yes,
+an empty pool command is needed, otherwise it is difficult to try new ideas/motives. And also the
+shared clock/signal. My idea was to have 2-3 banks (pools) available, ready to be recalled - like in
+a development section, where material from different sections are mixed together. These banks would
+be filled just by playing a different midi clip for capture (A/B/C), then recall them after N bars
+(an automatable knob would make the switch, or even the same autonomous mechanism that we already
+have)."
+
+Two features shipped together here, both self-contained single-instance work. The "shared
+clock/signal" for cross-instance coordination is explicitly NOT part of this section - it deserves
+its own focused conversation rather than being bolted on here, and remains on the list, not dropped.
+
+**Clear Bank**: a momentary button (`requestClearCaptureBank()`) that empties whichever bank
+`captureBank` is currently set to, so a fresh idea can be auditioned without stale material bleeding
+back in via Callback Probability or Autonomous Fire. Not a normal APVTS parameter - there's no clean
+"momentary trigger" shape in APVTS (same reasoning as the existing `randomizeInstanceSeed`), and
+unlike that method (which only ever touches its own atomic parameter float), this one reaches into
+`phraseMemoryBanks`, a plain member vector the AUDIO thread also reads/writes every block. A direct
+`.clear()` from the message-thread button click would be a real data race. Instead the click just
+raises `std::atomic<bool> clearCaptureBankRequested`; `processBlock()` consumes it via
+`.exchange(false)` at the very top of the NEXT block, on the audio thread itself, and clears against
+`captureBank`'s value read at that moment - the same message-thread/audio-thread separation pattern
+this codebase already uses for parameter reads, just applied to a one-shot command instead of a
+continuous value.
+
+**Multi-bank memory**: the single `phraseMemory` vector (SS21) became
+`std::array<std::vector<odly::MemoryEntry>, 3> phraseMemoryBanks` (banks A/B/C, each still capped at
+8 entries, oldest evicted first, exactly as before). Two new `AudioParameterChoice` selectors,
+deliberately DECOUPLED per the user's own framing above (fill a new bank while a different one keeps
+playing, then switch over) rather than one shared knob:
+
+- **Capture Bank** - which bank a newly-closed phrase is written into (`scheduleClosedPhrase`'s
+  push-back/evict-oldest step).
+- **Active Bank** - which bank Callback Probability (`scheduleClosedPhrase`'s memory-callback read)
+  AND Autonomous Fire (`checkAutonomousFire`) both draw FROM. Deliberately shared between these two
+  consumers rather than each getting its own selector - both are "echo something old" mechanisms, and
+  splitting them would let the pool a track is currently developing from silently fork into two,
+  with no clear musical rationale for why they'd ever differ.
+
+No new `odly::` pure functions were needed: `resolveMemoryCallback`/`resolveAutonomousFireIndex`
+already take `poolSize` as a plain int, agnostic to which bank the caller passes in, so both existing
+salt-11/salt-13 hash draws carry over unchanged - the bank selection itself is a plain deterministic
+parameter read, not a randomized draw, so no new salt was needed either.
+
+Editor gained "Capture Bank" (ComboBox + "Clear Bank" button on the same row) and "Active Bank"
+(ComboBox) rows in the left (capture & timing) column, placed after Autonomous Fire and before
+Instance Seed; window height 700→760 to fit (left column now 2 rows taller than before).
+
+No new tests were strictly required at the pure-logic layer (no new `odly::` functions), so the
+existing 153-assertion suite is the full coverage here - confirmed still passing after this change.
+Rebuilt + reinstalled, Build ~2026-09-16. **Not yet live-tested** - required before calling this
+actually done, per this repo's own established discipline. Recency-weighted pool selection (instead
+of today's uniform-random pick, for both Callback Probability and Autonomous Fire) remains an open
+follow-up the user flagged separately ("I see also the Bias selection very handy. But we'll discuss
+more in detail after this first addition") - not addressed here.

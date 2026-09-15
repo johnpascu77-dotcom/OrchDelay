@@ -15,7 +15,7 @@ namespace
 OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
-    setSize (1040, 700);
+    setSize (1040, 760);
 
     titleLabel.setText ("OrchDelay", juce::dontSendNotification);
     titleLabel.setJustificationType (juce::Justification::centred);
@@ -108,6 +108,40 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     addAndMakeVisible (autonomousFireLabel);
     setupSlider (autonomousFireSlider);
 
+    // Multi-bank memory (see Docs SS25): Capture Bank is where newly-closed
+    // phrases get remembered; Active Bank is where Callback Probability and
+    // Autonomous Fire draw from. Deliberately two independent selectors, not
+    // one shared knob - build up new material in one bank while a different
+    // one keeps playing, then switch Active Bank over when ready.
+    setupLabel (captureBankLabel, "Capture Bank");
+    addAndMakeVisible (captureBankLabel);
+    captureBankBox.addItem ("A", 1);
+    captureBankBox.addItem ("B", 2);
+    captureBankBox.addItem ("C", 3);
+    captureBankBox.setColour (juce::ComboBox::backgroundColourId, kBoxBackground);
+    captureBankBox.setColour (juce::ComboBox::textColourId, juce::Colours::white);
+    captureBankBox.setColour (juce::ComboBox::outlineColourId, kOutline);
+    addAndMakeVisible (captureBankBox);
+
+    // "Clear Bank" - clears whichever bank Capture Bank is CURRENTLY set to,
+    // so a fresh idea/motive can start without old material bleeding back in
+    // via Callback/Autonomous Fire (see OrchDelayProcessor::requestClearCaptureBank).
+    clearBankButton.setButtonText ("Clear Bank");
+    clearBankButton.setColour (juce::TextButton::buttonColourId, kBoxBackground);
+    clearBankButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    clearBankButton.onClick = [this] { audioProcessor.requestClearCaptureBank(); };
+    addAndMakeVisible (clearBankButton);
+
+    setupLabel (activeBankLabel, "Active Bank");
+    addAndMakeVisible (activeBankLabel);
+    activeBankBox.addItem ("A", 1);
+    activeBankBox.addItem ("B", 2);
+    activeBankBox.addItem ("C", 3);
+    activeBankBox.setColour (juce::ComboBox::backgroundColourId, kBoxBackground);
+    activeBankBox.setColour (juce::ComboBox::textColourId, juce::Colours::white);
+    activeBankBox.setColour (juce::ComboBox::outlineColourId, kOutline);
+    addAndMakeVisible (activeBankBox);
+
     setupLabel (restlessnessLabel, "Restlessness");
     addAndMakeVisible (restlessnessLabel);
     setupSlider (restlessnessSlider);
@@ -198,6 +232,8 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     minimumInterestAttachment = std::make_unique<SliderAttachment> (state, "minimumInterest", minimumInterestSlider);
     callbackProbabilityAttachment = std::make_unique<SliderAttachment> (state, "callbackProbability", callbackProbabilitySlider);
     autonomousFireAttachment = std::make_unique<SliderAttachment> (state, "autonomousFireBars", autonomousFireSlider);
+    captureBankAttachment = std::make_unique<ComboBoxAttachment> (state, "captureBank", captureBankBox);
+    activeBankAttachment = std::make_unique<ComboBoxAttachment> (state, "activeBank", activeBankBox);
     restlessnessAttachment = std::make_unique<SliderAttachment> (state, "restlessness", restlessnessSlider);
     contentAwareWeightingAttachment = std::make_unique<ButtonAttachment> (state, "contentAwareWeighting", contentAwareWeightingButton);
     transformAttachment = std::make_unique<ComboBoxAttachment> (state, "manualTransform", transformBox);
@@ -287,6 +323,17 @@ void OrchDelayAudioProcessorEditor::resized()
 
     autonomousFireLabel.setBounds (leftRow (18));
     autonomousFireSlider.setBounds (leftRow());
+    leftArea.removeFromTop (8);
+
+    captureBankLabel.setBounds (leftRow (18));
+    auto captureBankRow = leftRow();
+    clearBankButton.setBounds (captureBankRow.removeFromRight (90));
+    captureBankRow.removeFromRight (8);
+    captureBankBox.setBounds (captureBankRow);
+    leftArea.removeFromTop (8);
+
+    activeBankLabel.setBounds (leftRow (18));
+    activeBankBox.setBounds (leftRow());
     leftArea.removeFromTop (8);
 
     instanceSeedLabel.setBounds (leftRow (18));

@@ -49,6 +49,13 @@ private:
     juce::Label autonomousFireLabel;
     juce::Slider autonomousFireSlider;
 
+    juce::Label captureBankLabel;
+    juce::ComboBox captureBankBox;
+    juce::TextButton clearBankButton;
+
+    juce::Label activeBankLabel;
+    juce::ComboBox activeBankBox;
+
     juce::Label restlessnessLabel;
     juce::Slider restlessnessSlider;
     juce::ToggleButton contentAwareWeightingButton;
@@ -96,6 +103,8 @@ private:
     std::unique_ptr<SliderAttachment> minimumInterestAttachment;
     std::unique_ptr<SliderAttachment> callbackProbabilityAttachment;
     std::unique_ptr<SliderAttachment> autonomousFireAttachment;
+    std::unique_ptr<ComboBoxAttachment> captureBankAttachment;
+    std::unique_ptr<ComboBoxAttachment> activeBankAttachment;
     std::unique_ptr<SliderAttachment> restlessnessAttachment;
     std::unique_ptr<ButtonAttachment> contentAwareWeightingAttachment;
     std::unique_ptr<ComboBoxAttachment> transformAttachment;

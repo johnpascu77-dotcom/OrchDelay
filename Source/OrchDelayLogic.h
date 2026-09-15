@@ -416,8 +416,8 @@ namespace odly
     // Just enough of a PAST phrase's own captured shape to echo it again
     // later: its notes plus the phraseStart/End that transforms referencing
     // the phrase's own timing (Retrograde, Stretch) need. The processor owns
-    // a small pool of these (most-recent-N actually played, not echoed -
-    // see OrchDelayProcessor's own phraseMemory).
+    // 3 independent small pools of these (most-recent-N actually played, not
+    // echoed - see OrchDelayProcessor's own phraseMemoryBanks, Docs SS25).
     struct MemoryEntry
     {
         std::vector<HeldNote> notes;

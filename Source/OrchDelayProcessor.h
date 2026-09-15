@@ -72,6 +72,19 @@ public:
     // (undoable, saved in state), never a bare non-parameter side value.
     void randomizeInstanceSeed();
 
+    // "Clear Bank" button target - clears whichever bank Capture Bank is
+    // CURRENTLY set to, so a fresh idea/motive can start without old
+    // material still bleeding in via Callback/Autonomous Fire (see Docs
+    // SS25). Not a normal parameter (there's no clean "momentary trigger"
+    // shape in APVTS, same reasoning as Randomize above), and - unlike
+    // Randomize, which only ever touches its own atomic parameter float -
+    // this reaches into `phraseMemoryBanks`, a plain member vector the
+    // AUDIO thread also reads/writes every block, so a direct clear() here
+    // on the message thread would be a real data race. Instead this just
+    // raises a flag; processBlock() itself performs the actual clear, on
+    // the audio thread, at the top of the next block.
+    void requestClearCaptureBank();
+
 private:
     juce::AudioProcessorValueTreeState parameters;
 
@@ -98,6 +111,8 @@ private:
     std::atomic<float>* callbackProbabilityParameter = nullptr;
     std::atomic<float>* captureModeParameter = nullptr;
     std::atomic<float>* autonomousFireBarsParameter = nullptr;
+    std::atomic<float>* captureBankParameter = nullptr;
+    std::atomic<float>* activeBankParameter = nullptr;
     std::atomic<float>* instanceSeedParameter = nullptr;
 
     double sampleRate = 44100.0;
@@ -132,11 +147,23 @@ private:
     std::vector<odly::Phrase> pendingPhrases;
     std::vector<odly::ActiveFiredNote> activeFiredNotes;
 
-    // Most-recent-N phrases actually PLAYED (never a callback substitution
-    // itself - see Docs SS21), oldest evicted first once full. Fixed pool
-    // size, not exposed as a parameter in this first version.
+    // 3 independent memory banks (A/B/C - see Docs SS25), each holding the
+    // most-recent-N phrases actually PLAYED (never a callback substitution
+    // itself), oldest evicted first once full. `captureBank` selects which
+    // bank newly-closed phrases are added to; `activeBank` selects which
+    // bank Callback Probability and Autonomous Fire both draw FROM -
+    // deliberately independent selectors, not one shared knob, so a new
+    // bank can be filled with fresh material while a different one keeps
+    // playing, then switched over ("recalled") when ready - the
+    // development-section workflow this was built for.
     static constexpr int kMaxPhraseMemorySize = 8;
-    std::vector<odly::MemoryEntry> phraseMemory;
+    static constexpr int kPhraseMemoryBankCount = 3;
+    std::array<std::vector<odly::MemoryEntry>, kPhraseMemoryBankCount> phraseMemoryBanks;
+
+    // Set by requestClearCaptureBank() (message thread), consumed at the
+    // top of the next processBlock() (audio thread) - see that method's
+    // own doc comment for why a direct clear from the UI would be unsafe.
+    std::atomic<bool> clearCaptureBankRequested { false };
 
     // Tracks which live notes are currently passed straight through
     // (Overlay/Duck capture modes, see Docs SS22), by [channel][pitch]
