@@ -86,6 +86,9 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     setupLabel (restlessnessLabel, "Restlessness");
     addAndMakeVisible (restlessnessLabel);
     setupSlider (restlessnessSlider);
+    contentAwareWeightingButton.setButtonText ("Content-Aware");
+    contentAwareWeightingButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
+    addAndMakeVisible (contentAwareWeightingButton);
 
     setupLabel (transformLabel, "Transform");
     addAndMakeVisible (transformLabel);
@@ -167,6 +170,7 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     overlapModeAttachment = std::make_unique<ComboBoxAttachment> (state, "overlapMode", overlapModeBox);
     phraseGapAttachment = std::make_unique<SliderAttachment> (state, "phraseGapBeats", phraseGapSlider);
     restlessnessAttachment = std::make_unique<SliderAttachment> (state, "restlessness", restlessnessSlider);
+    contentAwareWeightingAttachment = std::make_unique<ButtonAttachment> (state, "contentAwareWeighting", contentAwareWeightingButton);
     transformAttachment = std::make_unique<ComboBoxAttachment> (state, "manualTransform", transformBox);
     transposeAttachment = std::make_unique<SliderAttachment> (state, "transposeSemitones", transposeSlider);
     transposeRandomAttachment = std::make_unique<ButtonAttachment> (state, "transposeRandom", transposeRandomButton);
@@ -225,7 +229,10 @@ void OrchDelayAudioProcessorEditor::resized()
     area.removeFromTop (8);
 
     restlessnessLabel.setBounds (row (18));
-    restlessnessSlider.setBounds (row());
+    auto restlessnessRow = row();
+    contentAwareWeightingButton.setBounds (restlessnessRow.removeFromRight (110));
+    restlessnessRow.removeFromRight (8);
+    restlessnessSlider.setBounds (restlessnessRow);
     area.removeFromTop (8);
 
     transformLabel.setBounds (row (18));

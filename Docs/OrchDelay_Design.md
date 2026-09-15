@@ -621,6 +621,44 @@ not 0. Editor gained an Interval Scale slider + Random toggle row; window height
 
 11 new test assertions (120 total, all passing): `applyIntervalScale` (100%/200%/0%/empty exact math,
 anchor-never-moves), dispatch, 8-way proposal coverage, and `resolveRandomIntervalPercent`'s
-asymmetric-bound behavior in both directions. Rebuilt + reinstalled, Build ~17:22 UTC 2026-09-15.
-**Not yet live-tested** - required before calling this actually done, per this repo's own established
-discipline.
+asymmetric-bound behavior in both directions.
+
+**RESOLVED**: live-tested successfully. Moving on to item 2.
+
+### Content-aware transform weighting
+
+Under Follow Restlessness, WHICH transform gets picked was always a flat equal-weight 1-in-8 chance -
+this was the long-open "per-transform weighting" gap noted since v1 (Docs SS7: "no evidence yet to
+favor one"). This item directly fills that gap with a concrete, defensible bias instead of arbitrary
+per-transform weights: `odly::computePhraseFeatures()` measures a captured phrase's own basic shape
+(note count, pitch spread in semitones, density = notes per beat over its own onset span - all cheap
+to compute from the already-captured `HeldNote` list, no new state needed), and
+`odly::proposeWeightedTransform()` uses those features to bias the pick:
+- **Inversion and Interval** favor a WIDE pitch spread - more dramatic to mirror or scale a melodic
+  shape that already spans a lot.
+- **Rotation** favors a HIGHER note count - needs several notes for a cyclic reassignment to be
+  interesting at all.
+- **Length** favors HIGH density (busy, many notes in a short span) - more material to meaningfully
+  trim.
+- **Stretch** favors LOW density (sparse, spread-out material) - more room and time to stretch into.
+- **Transpose, Retrograde, and M7** stay at a flat baseline weight - each reads as "always reasonable"
+  regardless of a phrase's own content, no clear bias case for either direction.
+
+Implemented as a weighted-random pick (cumulative-weight selection against the same deterministic
+hash construction as every other seeded choice here, salt 10) rather than hard categorical rules -
+each transform's weight is `1.0 + bonus` where `bonus` is a phrase-feature-derived value in `[0,1]`,
+so nothing is ever fully excluded, only made more or less likely. The original equal-weight
+`proposeTransform()` is left completely untouched (still independently tested) - a new
+`contentAwareWeighting` bool parameter (default ON, a strict improvement over flat-random) selects
+between the two at the one call site in `resolveAndScheduleTransform`; turning it off restores the
+original purely-uniform pick for anyone who wants that back. Has no effect when Transform is set to
+an explicit manual choice (only Follow Restlessness ever reaches this code path at all).
+
+10 new test assertions (130 total, all passing): `computePhraseFeatures`'s own arithmetic (count,
+spread, density, empty/single-note edge cases with no NaN/divide-by-zero), and - the assertions that
+actually matter here - three STATISTICAL bias-direction checks across large samples, confirming a
+dense phrase picks Length more often than an otherwise-identical sparse one, a sparse phrase picks
+Stretch more often than an otherwise-identical dense one, and a wide-range phrase picks Inversion more
+often than an otherwise-identical narrow one - i.e. the bias actually points the intended direction,
+not just "the code runs." Rebuilt + reinstalled, Build ~17:26 UTC 2026-09-15. **Not yet live-tested**
+- required before calling this actually done, per this repo's own established discipline.

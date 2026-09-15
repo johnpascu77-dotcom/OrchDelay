@@ -469,6 +469,69 @@ int main()
         check (allSeen, "proposeTransform: all 8 transforms (including the newly-added Interval) get picked across a large sample");
     }
 
+    // --- computePhraseFeatures: cheap shape measurements ----------------------
+    {
+        std::vector<odly::HeldNote> notes {
+            makeNote (0.0, 1.0, 60), makeNote (1.0, 1.0, 64), makeNote (2.0, 1.0, 72)
+        };
+        auto f = odly::computePhraseFeatures (notes);
+        check (f.noteCount == 3, "computePhraseFeatures: counts the notes");
+        check (f.pitchSpread == 12, "computePhraseFeatures: pitch spread = max-min (72-60=12)");
+        check (std::abs (f.density - 1.5f) < 1e-6f,
+              "computePhraseFeatures: density = noteCount / onset span (3 notes / 2 beats = 1.5)");
+
+        auto empty = odly::computePhraseFeatures ({});
+        check (empty.noteCount == 0 && empty.pitchSpread == 0, "computePhraseFeatures: an empty phrase is all zeros, no crash");
+
+        std::vector<odly::HeldNote> single { makeNote (0.0, 1.0, 60) };
+        auto singleFeatures = odly::computePhraseFeatures (single);
+        check (singleFeatures.pitchSpread == 0 && singleFeatures.density > 0.0f,
+              "computePhraseFeatures: a single note has zero spread and a floored (not infinite/NaN) density");
+    }
+
+    // --- proposeWeightedTransform: bias direction matches the phrase's content ---
+    {
+        const odly::PhraseFeatures dense { 8, 4, 8.0f };     // many notes, tight span, fast
+        const odly::PhraseFeatures sparse { 8, 4, 0.25f };   // same note count/range, spread thin
+
+        int denseLengthCount = 0, sparseLengthCount = 0;
+        int denseStretchCount = 0, sparseStretchCount = 0;
+        for (int i = 0; i < 4000; ++i)
+        {
+            const auto d = odly::proposeWeightedTransform (42, i, 1.0f, dense);
+            const auto s = odly::proposeWeightedTransform (42, i, 1.0f, sparse);
+            if (d.transformKind == odly::kTransformLength) ++denseLengthCount;
+            if (s.transformKind == odly::kTransformLength) ++sparseLengthCount;
+            if (d.transformKind == odly::kTransformStretch) ++denseStretchCount;
+            if (s.transformKind == odly::kTransformStretch) ++sparseStretchCount;
+        }
+        check (denseLengthCount > sparseLengthCount,
+              "proposeWeightedTransform: a DENSE phrase picks Length more often than a sparse one with the same note count/range");
+        check (sparseStretchCount > denseStretchCount,
+              "proposeWeightedTransform: a SPARSE phrase picks Stretch more often than a dense one with the same note count/range");
+
+        const odly::PhraseFeatures narrow { 8, 1, 2.0f };   // same count/density, tight pitch range
+        const odly::PhraseFeatures wide { 8, 24, 2.0f };    // same count/density, wide pitch range
+        int narrowInversionCount = 0, wideInversionCount = 0;
+        for (int i = 0; i < 4000; ++i)
+        {
+            const auto n = odly::proposeWeightedTransform (42, i, 1.0f, narrow);
+            const auto w = odly::proposeWeightedTransform (42, i, 1.0f, wide);
+            if (n.transformKind == odly::kTransformInversion) ++narrowInversionCount;
+            if (w.transformKind == odly::kTransformInversion) ++wideInversionCount;
+        }
+        check (wideInversionCount > narrowInversionCount,
+              "proposeWeightedTransform: a WIDE-range phrase picks Inversion more often than a narrow one with the same count/density");
+
+        const auto a = odly::proposeWeightedTransform (42, 7, 0.5f, dense);
+        const auto b = odly::proposeWeightedTransform (42, 7, 0.5f, dense);
+        check (a.applyAny == b.applyAny && a.transformKind == b.transformKind,
+              "proposeWeightedTransform: identical inputs always produce identical outputs (determinism)");
+
+        check (! odly::proposeWeightedTransform (42, 7, 0.0f, dense).applyAny,
+              "proposeWeightedTransform: restlessness=0 still never proposes a transform (the gate is unchanged)");
+    }
+
     // --- resolveRandomTransposeSemitones: deterministic, ranged, symmetric ---
     {
         const int a = odly::resolveRandomTransposeSemitones (5, 3, 12);

@@ -39,6 +39,7 @@ private:
 
     juce::Label restlessnessLabel;
     juce::Slider restlessnessSlider;
+    juce::ToggleButton contentAwareWeightingButton;
 
     juce::Label transformLabel;
     juce::ComboBox transformBox;
@@ -80,6 +81,7 @@ private:
     std::unique_ptr<ComboBoxAttachment> overlapModeAttachment;
     std::unique_ptr<SliderAttachment> phraseGapAttachment;
     std::unique_ptr<SliderAttachment> restlessnessAttachment;
+    std::unique_ptr<ButtonAttachment> contentAwareWeightingAttachment;
     std::unique_ptr<ComboBoxAttachment> transformAttachment;
     std::unique_ptr<SliderAttachment> transposeAttachment;
     std::unique_ptr<ButtonAttachment> transposeRandomAttachment;

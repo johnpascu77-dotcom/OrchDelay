@@ -338,6 +338,34 @@ namespace odly
     // bridge to hash against.
     TransformProposal proposeTransform (int instanceSeed, int phraseCounter, float restlessness);
 
+    // --- Content-aware transform weighting (see Docs SS19) -------------------
+    // A phrase's own basic shape, cheap to compute from its captured notes -
+    // feeds proposeWeightedTransform's bias below. Never mutates or judges
+    // the phrase itself, just measures it.
+    struct PhraseFeatures
+    {
+        int noteCount = 0;
+        int pitchSpread = 0;   // max pitch - min pitch, semitones
+        float density = 0.0f;  // notes per beat (noteCount / the phrase's own onset span)
+    };
+
+    PhraseFeatures computePhraseFeatures (const std::vector<HeldNote>& notes);
+
+    // Same "should we transform at all" gate as proposeTransform
+    // (restlessness), but if triggered, WHICH transform is picked is biased
+    // by the phrase's own features instead of a flat 1-in-8 chance:
+    // Inversion and Interval favor a wide pitch spread (more dramatic to
+    // mirror/scale a shape that already spans a lot); Rotation favors a
+    // higher note count (needs several notes to be interesting); Length
+    // favors high density (more to meaningfully trim from a busy phrase);
+    // Stretch favors low density/sparse material (more room and time to
+    // stretch into). Transpose, Retrograde, and M7 stay at a flat baseline
+    // weight - each is "always reasonable" regardless of content. Still
+    // fully deterministic (same instanceSeed+phraseCounter+features always
+    // picks the same transform).
+    TransformProposal proposeWeightedTransform (int instanceSeed, int phraseCounter, float restlessness,
+                                                const PhraseFeatures& features);
+
     // Resolves the ACTUAL transpose amount to use when Random Transpose mode
     // is on: deterministic (same instanceSeed+phraseCounter -> same result,
     // reload-stable, same hash construction as proposeTransform but salt 3

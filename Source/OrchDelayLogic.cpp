@@ -353,6 +353,83 @@ namespace odly
         return proposal;
     }
 
+    PhraseFeatures computePhraseFeatures (const std::vector<HeldNote>& notes)
+    {
+        PhraseFeatures f;
+        f.noteCount = static_cast<int> (notes.size());
+        if (notes.empty())
+            return f;
+
+        int minPitch = notes.front().pitch;
+        int maxPitch = notes.front().pitch;
+        for (const auto& n : notes)
+        {
+            minPitch = juce::jmin (minPitch, n.pitch);
+            maxPitch = juce::jmax (maxPitch, n.pitch);
+        }
+        f.pitchSpread = maxPitch - minPitch;
+
+        // Notes are always in onset order (Phrase's own invariant), so the
+        // span from first to last onset is a cheap, adequate density proxy -
+        // a floor avoids dividing by (near) zero for a single very short
+        // phrase.
+        const double spanBeats = notes.size() > 1 ? (notes.back().onsetPpq - notes.front().onsetPpq) : 0.0;
+        f.density = static_cast<float> (f.noteCount) / static_cast<float> (juce::jmax (0.25, spanBeats));
+
+        return f;
+    }
+
+    TransformProposal proposeWeightedTransform (int instanceSeed, int phraseCounter, float restlessness,
+                                                const PhraseFeatures& features)
+    {
+        restlessness = juce::jlimit (0.0f, 1.0f, restlessness);
+
+        TransformProposal proposal;
+        proposal.applyAny = hashUnit (instanceSeed, phraseCounter, 1) < restlessness;
+        if (! proposal.applyAny)
+            return proposal;
+
+        const float normalizedDensity = juce::jlimit (0.0f, 1.0f, features.density / 4.0f);
+        const float normalizedSparsity = 1.0f - normalizedDensity;
+        const float normalizedSpread = juce::jlimit (0.0f, 1.0f, static_cast<float> (features.pitchSpread) / 24.0f);
+        const float normalizedCount = juce::jlimit (0.0f, 1.0f, static_cast<float> (features.noteCount - 1) / 7.0f);
+
+        // Base weight 1.0 for every transform, boosted up to +1.0 for the
+        // ones that suit this phrase's own content - see this function's
+        // own doc comment for the reasoning behind each pairing. Order
+        // matches TransformKind 1..8.
+        const float weights[8] = {
+            1.0f,                        // 1 Transpose
+            1.0f,                        // 2 Retrograde
+            1.0f + normalizedSpread,     // 3 Inversion
+            1.0f + normalizedCount,      // 4 Rotation
+            1.0f + normalizedDensity,    // 5 Length
+            1.0f,                        // 6 M7
+            1.0f + normalizedSparsity,   // 7 Stretch
+            1.0f + normalizedSpread      // 8 Interval
+        };
+
+        float total = 0.0f;
+        for (float w : weights)
+            total += w;
+
+        const float target = hashUnit (instanceSeed, phraseCounter, 10) * total;   // salt 10
+        float cumulative = 0.0f;
+        int chosen = 1;
+        for (int i = 0; i < 8; ++i)
+        {
+            cumulative += weights[i];
+            if (target < cumulative)
+            {
+                chosen = i + 1;
+                break;
+            }
+        }
+
+        proposal.transformKind = chosen;
+        return proposal;
+    }
+
     int resolveRandomTransposeSemitones (int instanceSeed, int phraseCounter, int rangeSemitones)
     {
         const int bound = juce::jlimit (0, 48, rangeSemitones < 0 ? -rangeSemitones : rangeSemitones);

@@ -33,6 +33,7 @@ OrchDelayAudioProcessor::OrchDelayAudioProcessor()
     stretchQuantizedParameter = parameters.getRawParameterValue ("stretchQuantized");
     intervalScalePercentParameter = parameters.getRawParameterValue ("intervalScalePercent");
     intervalRandomParameter = parameters.getRawParameterValue ("intervalRandom");
+    contentAwareWeightingParameter = parameters.getRawParameterValue ("contentAwareWeighting");
     instanceSeedParameter = parameters.getRawParameterValue ("instanceSeed");
 }
 
@@ -116,7 +117,17 @@ void OrchDelayAudioProcessor::resolveAndScheduleTransform (odly::Phrase& phrase,
         phrase.chosenTransform = manualChoice - 1;   // maps directly onto odly::TransformKind
     else
     {
-        const auto proposal = odly::proposeTransform (instanceSeed, phraseCounter, restlessness);
+        // Content-aware weighting (see Docs SS19, default on) biases WHICH
+        // transform gets picked by the phrase's own features - a dense
+        // phrase leans toward Length, a sparse one toward Stretch, a
+        // wide-range one toward Inversion/Interval - rather than a flat
+        // 1-in-8 chance. Off falls back to the original equal-weight pick.
+        const bool contentAwareWeighting = contentAwareWeightingParameter != nullptr
+            && contentAwareWeightingParameter->load() >= 0.5f;
+        const auto proposal = contentAwareWeighting
+            ? odly::proposeWeightedTransform (instanceSeed, phraseCounter, restlessness,
+                                              odly::computePhraseFeatures (phrase.notes))
+            : odly::proposeTransform (instanceSeed, phraseCounter, restlessness);
         phrase.chosenTransform = proposal.applyAny ? proposal.transformKind : odly::kTransformNone;
     }
 
@@ -860,6 +871,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::cre
         juce::ParameterID { "intervalRandom", 1 },
         "Random Interval",
         false));
+
+    // Biases WHICH transform Follow Restlessness picks by the phrase's own
+    // features (density/pitch spread/note count) instead of a flat 1-in-8
+    // chance - see odly::proposeWeightedTransform / Docs SS19. Default ON:
+    // a strict improvement over the original equal-weight pick, with the
+    // toggle kept for anyone who wants the older, purely-uniform behavior
+    // back. Has no effect when Transform is set to an explicit manual
+    // choice rather than Follow Restlessness.
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "contentAwareWeighting", 1 },
+        "Content-Aware Weighting",
+        true));
 
     // This instance's own hash key for the restlessness proposal (see
     // odly::proposeTransform / fnv1aHash) - gives multiple OrchDelay
