@@ -9,6 +9,21 @@ namespace odly
         constexpr double kFallbackDurationBeats = 0.5;   // see closePhrase's own doc comment
     }
 
+    bool isOutsideActiveRange (const std::vector<ActiveFiredNote>& active, int pitch)
+    {
+        if (active.empty())
+            return true;
+
+        int minPitch = active.front().pitch;
+        int maxPitch = active.front().pitch;
+        for (const auto& n : active)
+        {
+            minPitch = juce::jmin (minPitch, n.pitch);
+            maxPitch = juce::jmax (maxPitch, n.pitch);
+        }
+        return pitch < minPitch || pitch > maxPitch;
+    }
+
     double beatsPerBar (int numerator, int denominator)
     {
         if (denominator <= 0)

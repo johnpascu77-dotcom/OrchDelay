@@ -727,5 +727,53 @@ observed ~50% callback rate at a 50% probability setting across a large sample, 
 across the whole pool (not clustered). The actual callback substitution mechanics
 (copy-then-override-then-push-original) live in the processor and aren't independently unit-tested -
 a known gap matching the same category as the stop/rewind transition logic and Overlap Mode's own
-busy-gating. Rebuilt + reinstalled, Build ~18:13 UTC 2026-09-15. **Not yet live-tested** - required
-before calling this actually done, per this repo's own established discipline.
+busy-gating. Rebuilt + reinstalled, Build ~18:13 UTC 2026-09-15.
+
+**RESOLVED**: live-tested successfully. Moving on to item 5, the last of the "second list."
+
+### Overlay/Ducking capture modes
+
+The last and most architecturally significant item - the only one of the 5 that reopens an already-
+settled design decision (SS2/SS3.2's own "live notes are always fully swallowed, only the echo
+sounds"). Deliberately built LAST, after the other 4, so nothing else in this session's work depended
+on the swallow-only guarantee changing.
+
+New `odly::CaptureMode` (`captureMode` parameter, default `Replace`=0, unchanged from the original
+behavior):
+- **Replace** - unchanged original behavior. Only the delayed echo ever sounds.
+- **Overlay** - the live note ALWAYS passes through immediately, alongside whatever echo may be
+  sounding - layered, canon-like coexistence rather than strict alternation.
+- **Duck** - the live note passes through only when its pitch falls OUTSIDE the range currently
+  spanned by whatever OrchDelay has actually fired and is still sounding
+  (`odly::isOutsideActiveRange`, computed from `activeFiredNotes` - an empty list means nothing is
+  occupying any register, so everything passes freely). Gives the echo the floor in its own register
+  while still letting live playing through elsewhere, rather than either full silence or full overlap.
+
+**Critical in all 3 modes: the live note is ALWAYS still captured into the buffer for its own future
+echo, regardless of Capture Mode** - this setting only ever decides whether the SAME note ALSO sounds
+immediately, never whether it gets buffered. No change to the capture/close/schedule pipeline that
+every other item in this session was built and tested against.
+
+**Stuck-note risk, and how it's avoided**: Duck mode's pass-through decision is evaluated PER NOTE-ON,
+against whatever the echo's pitch range happens to be at that instant - but a note held by the
+performer could easily still be sounding by the time its OWN note-off arrives, by which point the
+echo's range (or whether anything is sounding at all) may have changed. Re-evaluating the SAME
+pass-through question at note-off time risks a note whose note-on passed through never getting a
+matching note-off (permanently stuck downstream) - exactly the bug class this ecosystem has hit
+before (OrchPiano's own `PendingRestrike`/`PendingTremolo` history, cited throughout this repo's own
+design decisions). Fixed by tracking, not re-deciding: a new `passthroughHeld[channel][pitch]` table
+(processor-owned) is set the moment a note-on passes through; when THAT note's own real note-off
+arrives, it passes through UNCONDITIONALLY if the table says so, regardless of what the current range
+looks like by then. `drainAndSilence()` - already the single place every other stuck-note risk in
+this plugin gets swept (stop, rewind, bypass) - was extended to ALSO flush any still-held
+passthrough entries the same way it already flushes `activeFiredNotes`: never clear tracking without
+emitting the note-offs in the same operation.
+
+6 new test assertions (148 total, all passing) cover `odly::isOutsideActiveRange` directly (empty-list
+edge case, inclusive range boundaries, both sides of the range). The actual pass-through/tracking
+mechanics live in the processor (real-time MIDI I/O, not expressible as a pure function) and aren't
+unit-tested - the same known-gap category as every other real-time-state mechanism in this plugin
+(stop/rewind transitions, Overlap Mode's busy-gating, the memory-bank substitution). Rebuilt +
+reinstalled, Build ~18:19 UTC 2026-09-15. **Not yet live-tested** - required before calling this
+actually done, per this repo's own established discipline. This closes out all 5 items of the
+"second list" (SS18-SS22) pending live confirmation of this last one.

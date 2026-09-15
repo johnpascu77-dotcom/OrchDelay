@@ -190,6 +190,37 @@ namespace odly
                                       int holdBars, double beatsPerBarNow,
                                       Phrase& openPhrase);
 
+    // --- Stuck-note-cleanup discipline (see Docs SS2) -----------------------
+    // A single note-off "occurrence" this OrchDelay instance owes the output
+    // for something it fired earlier, tracked by seq so an overlapping
+    // same-pitch re-fire can never cross-release the wrong one.
+    struct ActiveFiredNote
+    {
+        int channel = 1;
+        int pitch = 60;
+        juce::int64 seq = -1;
+        double noteOffPpq = 0.0;
+    };
+
+    // How live input relates to a currently-sounding echo (see Docs SS22).
+    // Reopens the original "live notes are always fully swallowed" decision
+    // (Docs SS2/SS3.2) - kept as the default (kCaptureReplace), since it's
+    // still exactly right for a clean call-and-response device, but not
+    // every use wants that.
+    enum CaptureMode
+    {
+        kCaptureReplace = 0,   // original behavior - live notes always fully swallowed, only the echo sounds
+        kCaptureOverlay = 1,   // live notes always pass through immediately, alongside any echo
+        kCaptureDuck = 2       // live notes pass through only OUTSIDE the currently-sounding echo's own pitch range
+    };
+
+    // True if `pitch` falls outside the [min,max] pitch range currently
+    // spanned by `active` (the notes OrchDelay has actually fired and is
+    // still sounding) - the decision Duck capture mode uses per live note.
+    // An empty `active` list means nothing is currently occupying any
+    // register, so everything counts as "outside" (pass through freely).
+    bool isOutsideActiveRange (const std::vector<ActiveFiredNote>& active, int pitch);
+
     // Bar length in ppq (quarter notes) for a given time signature - a
     // quarter note is always 1.0 ppq by definition, so a bar is
     // numerator * (4.0 / denominator) quarter notes.
@@ -487,16 +518,4 @@ namespace odly
     // continuous range instead of giving every legal ratio an equal chance.
     // Salt 7, independent of every other seeded draw in this file.
     float resolveRandomQuantizedStretchPercent (int instanceSeed, int phraseCounter, float boundPercent);
-
-    // --- Stuck-note-cleanup discipline (see Docs SS2) -----------------------
-    // A single note-off "occurrence" this OrchDelay instance owes the output
-    // for something it fired earlier, tracked by seq so an overlapping
-    // same-pitch re-fire can never cross-release the wrong one.
-    struct ActiveFiredNote
-    {
-        int channel = 1;
-        int pitch = 60;
-        juce::int64 seq = -1;
-        double noteOffPpq = 0.0;
-    };
 }

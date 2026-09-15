@@ -596,6 +596,21 @@ int main()
         check (sawLowIndex && sawHighIndex, "resolveMemoryCallback: poolIndex spreads across the whole pool, not clustered at one end");
     }
 
+    // --- isOutsideActiveRange: the Duck capture-mode decision ---------------
+    {
+        check (odly::isOutsideActiveRange ({}, 60), "isOutsideActiveRange: an empty active list means everything is outside (pass through freely)");
+
+        odly::ActiveFiredNote a; a.pitch = 60;
+        odly::ActiveFiredNote b; b.pitch = 67;
+        std::vector<odly::ActiveFiredNote> active { a, b };   // echo currently spans [60,67]
+
+        check (! odly::isOutsideActiveRange (active, 60), "isOutsideActiveRange: the range's own low boundary pitch is NOT outside (inclusive)");
+        check (! odly::isOutsideActiveRange (active, 67), "isOutsideActiveRange: the range's own high boundary pitch is NOT outside (inclusive)");
+        check (! odly::isOutsideActiveRange (active, 63), "isOutsideActiveRange: a pitch strictly inside the span is NOT outside");
+        check (odly::isOutsideActiveRange (active, 59), "isOutsideActiveRange: one semitone below the low boundary IS outside");
+        check (odly::isOutsideActiveRange (active, 68), "isOutsideActiveRange: one semitone above the high boundary IS outside");
+    }
+
     // --- resolveRandomTransposeSemitones: deterministic, ranged, symmetric ---
     {
         const int a = odly::resolveRandomTransposeSemitones (5, 3, 12);

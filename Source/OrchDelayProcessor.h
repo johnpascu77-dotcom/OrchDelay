@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <vector>
 #include <JuceHeader.h>
@@ -94,6 +95,7 @@ private:
     std::atomic<float>* contentAwareWeightingParameter = nullptr;
     std::atomic<float>* minimumInterestParameter = nullptr;
     std::atomic<float>* callbackProbabilityParameter = nullptr;
+    std::atomic<float>* captureModeParameter = nullptr;
     std::atomic<float>* instanceSeedParameter = nullptr;
 
     double sampleRate = 44100.0;
@@ -132,6 +134,16 @@ private:
     // size, not exposed as a parameter in this first version.
     static constexpr int kMaxPhraseMemorySize = 8;
     std::vector<odly::MemoryEntry> phraseMemory;
+
+    // Tracks which live notes are currently passed straight through
+    // (Overlay/Duck capture modes, see Docs SS22), by [channel][pitch]
+    // (channel 1-16 used, index 0 unused) - so a note's own real note-off
+    // ALWAYS passes through too, once its note-on did, regardless of
+    // whether the capture mode or the currently-sounding echo's pitch
+    // range changed in between. Flushed (note-offs emitted AND cleared
+    // together) by drainAndSilence, same stuck-note-cleanup discipline as
+    // activeFiredNotes.
+    std::array<std::array<bool, 128>, 17> passthroughHeld {};
 
     // Resolves the manual/proposed transform choice for a just-closed phrase
     // and builds its outputNotes (odly::buildOutputNotes) - each note's own

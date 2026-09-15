@@ -15,7 +15,7 @@ namespace
 OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
-    setSize (520, 1022);
+    setSize (520, 1076);
 
     titleLabel.setText ("OrchDelay", juce::dontSendNotification);
     titleLabel.setJustificationType (juce::Justification::centred);
@@ -42,6 +42,19 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     bypassButton.setButtonText ("Bypass");
     bypassButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
     addAndMakeVisible (bypassButton);
+
+    captureModeLabel.setText ("Capture Mode", juce::dontSendNotification);
+    captureModeLabel.setJustificationType (juce::Justification::centredLeft);
+    captureModeLabel.setColour (juce::Label::textColourId, juce::Colours::white);
+    captureModeLabel.setFont (juce::FontOptions (14.0f));
+    addAndMakeVisible (captureModeLabel);
+    captureModeBox.addItem ("Replace", 1);
+    captureModeBox.addItem ("Overlay", 2);
+    captureModeBox.addItem ("Duck", 3);
+    captureModeBox.setColour (juce::ComboBox::backgroundColourId, kBoxBackground);
+    captureModeBox.setColour (juce::ComboBox::textColourId, juce::Colours::white);
+    captureModeBox.setColour (juce::ComboBox::outlineColourId, kOutline);
+    addAndMakeVisible (captureModeBox);
 
     auto setupLabel = [] (juce::Label& label, const juce::String& text)
     {
@@ -173,6 +186,7 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
 
     auto& state = audioProcessor.getParameters();
     bypassAttachment = std::make_unique<ButtonAttachment> (state, "bypass", bypassButton);
+    captureModeAttachment = std::make_unique<ComboBoxAttachment> (state, "captureMode", captureModeBox);
     holdBarsAttachment = std::make_unique<SliderAttachment> (state, "holdBars", holdBarsSlider);
     holdBarsRandomAttachment = std::make_unique<ButtonAttachment> (state, "holdBarsRandom", holdBarsRandomButton);
     overlapModeAttachment = std::make_unique<ComboBoxAttachment> (state, "overlapMode", overlapModeBox);
@@ -222,6 +236,10 @@ void OrchDelayAudioProcessorEditor::resized()
     area.removeFromTop (8);
 
     auto row = [&area] (int height = 28) { return area.removeFromTop (height); };
+
+    captureModeLabel.setBounds (row (18));
+    captureModeBox.setBounds (row());
+    area.removeFromTop (8);
 
     holdBarsLabel.setBounds (row (18));
     auto holdBarsRow = row();

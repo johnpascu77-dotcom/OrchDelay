@@ -36,6 +36,7 @@ OrchDelayAudioProcessor::OrchDelayAudioProcessor()
     contentAwareWeightingParameter = parameters.getRawParameterValue ("contentAwareWeighting");
     minimumInterestParameter = parameters.getRawParameterValue ("minimumInterest");
     callbackProbabilityParameter = parameters.getRawParameterValue ("callbackProbability");
+    captureModeParameter = parameters.getRawParameterValue ("captureMode");
     instanceSeedParameter = parameters.getRawParameterValue ("instanceSeed");
 }
 
@@ -48,6 +49,8 @@ void OrchDelayAudioProcessor::prepareToPlay (double newSampleRate, int samplesPe
     pendingPhrases.clear();
     activeFiredNotes.clear();
     phraseMemory.clear();
+    for (auto& channelRow : passthroughHeld)
+        channelRow.fill (false);
     nextNoteSeq = 1;
     nextPhraseId = 0;
     phraseCounter = 0;
@@ -91,6 +94,17 @@ void OrchDelayAudioProcessor::drainAndSilence (juce::MidiBuffer& output, int sam
     for (const auto& active : activeFiredNotes)
         output.addEvent (juce::MidiMessage::noteOff (active.channel, active.pitch), samplePosition);
     activeFiredNotes.clear();
+
+    // Same discipline for any live note currently passed straight through
+    // (Overlay/Duck capture modes, see Docs SS22) - never leave one
+    // sounding downstream with no note-off ever coming.
+    for (int ch = 1; ch <= 16; ++ch)
+        for (int pitch = 0; pitch < 128; ++pitch)
+            if (passthroughHeld[static_cast<size_t> (ch)][static_cast<size_t> (pitch)])
+            {
+                output.addEvent (juce::MidiMessage::noteOff (ch, pitch), samplePosition);
+                passthroughHeld[static_cast<size_t> (ch)][static_cast<size_t> (pitch)] = false;
+            }
 }
 
 void OrchDelayAudioProcessor::resolveAndScheduleTransform (odly::Phrase& phrase, int transposeSemitones)
@@ -430,6 +444,8 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
             const int holdBars = holdBarsRandom
                 ? odly::resolveRandomHoldBars (instanceSeedForHold, phraseCounter, baseHoldBars)
                 : baseHoldBars;
+            const int captureMode = captureModeParameter != nullptr
+                ? juce::jlimit (0, 2, juce::roundToInt (captureModeParameter->load())) : odly::kCaptureReplace;
 
             // --- capture incoming note-on/note-off events into phrases ----
             for (const auto metadata : midiMessages)
@@ -459,9 +475,41 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
                     scheduleClosedPhrase (result.closedPhrase, transposeSemitones);
                 }
 
-                // The live note-on/off is swallowed into the buffer, never
-                // passed through live - see Docs SS3.2 (only the delayed,
-                // possibly-transformed echo ever sounds).
+                // Capture Mode (see Docs SS22): the live note is ALWAYS
+                // captured into the buffer above regardless of mode - this
+                // only decides whether it ALSO sounds immediately.
+                // kCaptureReplace (default, original SS3.2 behavior): never
+                // passes through, only the delayed echo ever sounds.
+                // kCaptureOverlay: always passes through, alongside any echo.
+                // kCaptureDuck: passes through only OUTSIDE the currently-
+                // sounding echo's own pitch range - a note-OFF always
+                // passes through if its own note-on did (tracked by
+                // passthroughHeld), regardless of what the range looks like
+                // by the time the note-off arrives, so nothing ever gets
+                // stuck sounding downstream.
+                const int passthroughChannel = juce::jlimit (1, 16, event.channel);
+                const int passthroughPitch = juce::jlimit (0, 127, event.pitch);
+
+                if (event.isNoteOn)
+                {
+                    const bool passThrough = captureMode == odly::kCaptureOverlay
+                        || (captureMode == odly::kCaptureDuck
+                            && odly::isOutsideActiveRange (activeFiredNotes, passthroughPitch));
+
+                    if (passThrough)
+                    {
+                        output.addEvent (msg, metadata.samplePosition);
+                        passthroughHeld[static_cast<size_t> (passthroughChannel)]
+                                       [static_cast<size_t> (passthroughPitch)] = true;
+                    }
+                }
+                else if (passthroughHeld[static_cast<size_t> (passthroughChannel)]
+                                        [static_cast<size_t> (passthroughPitch)])
+                {
+                    output.addEvent (msg, metadata.samplePosition);
+                    passthroughHeld[static_cast<size_t> (passthroughChannel)]
+                                   [static_cast<size_t> (passthroughPitch)] = false;
+                }
             }
 
             // --- proactively close a finished phrase even with no new note ----
@@ -723,6 +771,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::cre
         juce::ParameterID { "bypass", 1 },
         "Bypass",
         false));
+
+    // How live input relates to a currently-sounding echo (see
+    // odly::CaptureMode / Docs SS22). Reopens the original "live notes are
+    // always fully swallowed" decision - kept as the default (Replace),
+    // still exactly right for a clean call-and-response device, but not
+    // every use wants that. The live note is ALWAYS still captured into the
+    // buffer for its own future echo regardless of this setting - it only
+    // decides whether it ALSO sounds immediately.
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "captureMode", 1 },
+        "Capture Mode",
+        juce::StringArray { "Replace", "Overlay", "Duck" },
+        0));
 
     // The core "how far in the future" control - the whole point of the
     // device. 0 is a dedicated "pause capturing" state (see Docs SS17) -

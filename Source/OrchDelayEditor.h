@@ -27,6 +27,9 @@ private:
 
     juce::ToggleButton bypassButton;
 
+    juce::Label captureModeLabel;
+    juce::ComboBox captureModeBox;
+
     juce::Label holdBarsLabel;
     juce::Slider holdBarsSlider;
     juce::ToggleButton holdBarsRandomButton;
@@ -82,6 +85,7 @@ private:
     using ComboBoxAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
 
     std::unique_ptr<ButtonAttachment> bypassAttachment;
+    std::unique_ptr<ComboBoxAttachment> captureModeAttachment;
     std::unique_ptr<SliderAttachment> holdBarsAttachment;
     std::unique_ptr<ButtonAttachment> holdBarsRandomAttachment;
     std::unique_ptr<ComboBoxAttachment> overlapModeAttachment;
