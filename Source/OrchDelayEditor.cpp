@@ -15,7 +15,7 @@ namespace
 OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
-    setSize (520, 800);
+    setSize (520, 860);
 
     titleLabel.setText ("OrchDelay", juce::dontSendNotification);
     titleLabel.setJustificationType (juce::Justification::centred);
@@ -65,6 +65,19 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     setupLabel (holdBarsLabel, "Hold Bars");
     addAndMakeVisible (holdBarsLabel);
     setupSlider (holdBarsSlider);
+    holdBarsRandomButton.setButtonText ("Random");
+    holdBarsRandomButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
+    addAndMakeVisible (holdBarsRandomButton);
+
+    setupLabel (overlapModeLabel, "Overlap Mode");
+    addAndMakeVisible (overlapModeLabel);
+    overlapModeBox.addItem ("Overlap", 1);
+    overlapModeBox.addItem ("Wait", 2);
+    overlapModeBox.addItem ("Skip", 3);
+    overlapModeBox.setColour (juce::ComboBox::backgroundColourId, kBoxBackground);
+    overlapModeBox.setColour (juce::ComboBox::textColourId, juce::Colours::white);
+    overlapModeBox.setColour (juce::ComboBox::outlineColourId, kOutline);
+    addAndMakeVisible (overlapModeBox);
 
     setupLabel (phraseGapLabel, "Phrase Gap (beats)");
     addAndMakeVisible (phraseGapLabel);
@@ -142,6 +155,8 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     auto& state = audioProcessor.getParameters();
     bypassAttachment = std::make_unique<ButtonAttachment> (state, "bypass", bypassButton);
     holdBarsAttachment = std::make_unique<SliderAttachment> (state, "holdBars", holdBarsSlider);
+    holdBarsRandomAttachment = std::make_unique<ButtonAttachment> (state, "holdBarsRandom", holdBarsRandomButton);
+    overlapModeAttachment = std::make_unique<ComboBoxAttachment> (state, "overlapMode", overlapModeBox);
     phraseGapAttachment = std::make_unique<SliderAttachment> (state, "phraseGapBeats", phraseGapSlider);
     restlessnessAttachment = std::make_unique<SliderAttachment> (state, "restlessness", restlessnessSlider);
     transformAttachment = std::make_unique<ComboBoxAttachment> (state, "manualTransform", transformBox);
@@ -185,7 +200,14 @@ void OrchDelayAudioProcessorEditor::resized()
     auto row = [&area] (int height = 28) { return area.removeFromTop (height); };
 
     holdBarsLabel.setBounds (row (18));
-    holdBarsSlider.setBounds (row());
+    auto holdBarsRow = row();
+    holdBarsRandomButton.setBounds (holdBarsRow.removeFromRight (75));
+    holdBarsRow.removeFromRight (8);
+    holdBarsSlider.setBounds (holdBarsRow);
+    area.removeFromTop (8);
+
+    overlapModeLabel.setBounds (row (18));
+    overlapModeBox.setBounds (row());
     area.removeFromTop (8);
 
     phraseGapLabel.setBounds (row (18));
@@ -260,7 +282,8 @@ void OrchDelayAudioProcessorEditor::timerCallback()
     statusLabel.setText (juce::String (pending) + " pend | cap " +
                          juce::String (audioProcessor.notesCapturedForUi()) + " cls " +
                          juce::String (audioProcessor.phrasesClosedForUi()) + " fire " +
-                         juce::String (audioProcessor.phrasesFiredForUi()) + " stop " +
+                         juce::String (audioProcessor.phrasesFiredForUi()) + " skip " +
+                         juce::String (audioProcessor.skippedBusyForUi()) + " stop " +
                          juce::String (audioProcessor.stopEventsForUi()) + " rwSeen " +
                          juce::String (audioProcessor.rewindDetectedForUi()) + " rwAct " +
                          juce::String (audioProcessor.rewindActedForUi()) + "\nsched " +

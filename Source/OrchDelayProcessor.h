@@ -61,6 +61,7 @@ public:
     int lastChosenTransformForUi() const { return lastChosenTransformUi.load(); }
     int lastManualChoiceForUi() const { return lastManualChoiceUi.load(); }
     float lastResolvedStretchPercentForUi() const { return lastResolvedStretchPercentUi.load(); }
+    int skippedBusyForUi() const { return totalPhrasesSkippedBusyUi.load(); }
 
     // "Randomize" button target - writes through the normal parameter path
     // (undoable, saved in state), never a bare non-parameter side value.
@@ -71,6 +72,8 @@ private:
 
     std::atomic<float>* bypassParameter = nullptr;
     std::atomic<float>* holdBarsParameter = nullptr;
+    std::atomic<float>* holdBarsRandomParameter = nullptr;
+    std::atomic<float>* overlapModeParameter = nullptr;
     std::atomic<float>* phraseGapBeatsParameter = nullptr;
     std::atomic<float>* restlessnessParameter = nullptr;
     std::atomic<float>* manualTransformParameter = nullptr;
@@ -103,6 +106,7 @@ private:
     std::atomic<int> lastChosenTransformUi { -1 };   // odly::TransformKind actually resolved last time
     std::atomic<int> lastManualChoiceUi { -1 };      // raw manualTransform parameter value read last time
     std::atomic<float> lastResolvedStretchPercentUi { -1.0f };   // actual stretch % passed to buildOutputNotes
+    std::atomic<int> totalPhrasesSkippedBusyUi { 0 };   // Overlap Mode "Skip" discards - due while busy
 
     juce::int64 nextNoteSeq = 1;      // 0 never issued, matches OrchPiano's own convention
     int nextPhraseId = 0;

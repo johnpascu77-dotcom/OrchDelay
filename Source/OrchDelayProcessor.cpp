@@ -17,6 +17,8 @@ OrchDelayAudioProcessor::OrchDelayAudioProcessor()
 {
     bypassParameter = parameters.getRawParameterValue ("bypass");
     holdBarsParameter = parameters.getRawParameterValue ("holdBars");
+    holdBarsRandomParameter = parameters.getRawParameterValue ("holdBarsRandom");
+    overlapModeParameter = parameters.getRawParameterValue ("overlapMode");
     phraseGapBeatsParameter = parameters.getRawParameterValue ("phraseGapBeats");
     restlessnessParameter = parameters.getRawParameterValue ("restlessness");
     manualTransformParameter = parameters.getRawParameterValue ("manualTransform");
@@ -58,6 +60,7 @@ void OrchDelayAudioProcessor::prepareToPlay (double newSampleRate, int samplesPe
     lastChosenTransformUi.store (-1);
     lastManualChoiceUi.store (-1);
     lastResolvedStretchPercentUi.store (-1.0f);
+    totalPhrasesSkippedBusyUi.store (0);
 }
 
 void OrchDelayAudioProcessor::releaseResources()
@@ -267,21 +270,36 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         // played would silently vanish on every stop. On a repeated/glitchy
         // stoppedPlaying transition, openPhrase is already empty by then, so
         // this is naturally a no-op the second time - nothing to guard.
+        // Hold Bars=0 pauses capturing entirely (see Docs SS17) - a
+        // still-open phrase from before the pause is left exactly as it
+        // was, neither closed nor discarded, so it resumes normally once
+        // Hold Bars is raised again rather than being force-closed here.
         if (! openPhrase.notes.empty())
         {
-            const int holdBarsAtStop = holdBarsParameter != nullptr
-                ? juce::jlimit (1, 16, juce::roundToInt (holdBarsParameter->load())) : 4;
-            const int transposeSemitonesAtStop = transposeSemitonesParameter != nullptr
-                ? juce::jlimit (-48, 48, juce::roundToInt (transposeSemitonesParameter->load())) : 12;
-            odly::closePhrase (openPhrase, holdBarsAtStop, beatsPerBarNow, blockStartPpq);
-            ++phraseCounter;
-            totalPhrasesClosedUi.fetch_add (1);
-            lastScheduledFirePpqUi.store (openPhrase.scheduledFirePpq);
-            odly::Phrase closed = openPhrase;
-            resolveAndScheduleTransform (closed, transposeSemitonesAtStop);
-            pendingPhrases.push_back (closed);
+            const int baseHoldBarsAtStop = holdBarsParameter != nullptr
+                ? juce::jlimit (0, 16, juce::roundToInt (holdBarsParameter->load())) : 4;
+
+            if (baseHoldBarsAtStop > 0)
+            {
+                const bool holdBarsRandomAtStop = holdBarsRandomParameter != nullptr
+                    && holdBarsRandomParameter->load() >= 0.5f;
+                const int instanceSeedAtStop = instanceSeedParameter != nullptr
+                    ? juce::jlimit (0, 127, juce::roundToInt (instanceSeedParameter->load())) : 0;
+                const int holdBarsAtStop = holdBarsRandomAtStop
+                    ? odly::resolveRandomHoldBars (instanceSeedAtStop, phraseCounter, baseHoldBarsAtStop)
+                    : baseHoldBarsAtStop;
+                const int transposeSemitonesAtStop = transposeSemitonesParameter != nullptr
+                    ? juce::jlimit (-48, 48, juce::roundToInt (transposeSemitonesParameter->load())) : 12;
+                odly::closePhrase (openPhrase, holdBarsAtStop, beatsPerBarNow, blockStartPpq);
+                ++phraseCounter;
+                totalPhrasesClosedUi.fetch_add (1);
+                lastScheduledFirePpqUi.store (openPhrase.scheduledFirePpq);
+                odly::Phrase closed = openPhrase;
+                resolveAndScheduleTransform (closed, transposeSemitonesAtStop);
+                pendingPhrases.push_back (closed);
+                openPhrase = odly::Phrase {};
+            }
         }
-        openPhrase = odly::Phrase {};
 
         drainAndSilence (output, 0);
     }
@@ -316,64 +334,82 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
 
     if (playing)
     {
-        const int holdBars = holdBarsParameter != nullptr
-            ? juce::jlimit (1, 16, juce::roundToInt (holdBarsParameter->load())) : 4;
+        const int baseHoldBars = holdBarsParameter != nullptr
+            ? juce::jlimit (0, 16, juce::roundToInt (holdBarsParameter->load())) : 4;
         const double phraseGapBeats = phraseGapBeatsParameter != nullptr
             ? juce::jlimit (0.25, 8.0, static_cast<double> (phraseGapBeatsParameter->load())) : 1.0;
         const int transposeSemitones = transposeSemitonesParameter != nullptr
             ? juce::jlimit (-48, 48, juce::roundToInt (transposeSemitonesParameter->load())) : 12;
 
-        // --- capture incoming note-on/note-off events into phrases --------
-        for (const auto metadata : midiMessages)
+        // Hold Bars=0 pauses capturing entirely (see Docs SS17) - so the
+        // parrot can be given a rest without a hard Bypass reset. Incoming
+        // notes are still silently absorbed (never passed through, matching
+        // the existing swallow-only design, Docs SS3.2) - they're just
+        // never fed into a phrase at all while paused. Anything already
+        // pending/mid-hold from before the pause is untouched, since only
+        // the fire/note-off loops below (unconditional) touch it.
+        if (baseHoldBars > 0)
         {
-            const auto msg = metadata.getMessage();
-            if (! (msg.isNoteOn() || msg.isNoteOff()))
-                continue;   // everything else is dropped - OrchDelay only ever deals in notes
+            const bool holdBarsRandom = holdBarsRandomParameter != nullptr
+                && holdBarsRandomParameter->load() >= 0.5f;
+            const int instanceSeedForHold = instanceSeedParameter != nullptr
+                ? juce::jlimit (0, 127, juce::roundToInt (instanceSeedParameter->load())) : 0;
+            const int holdBars = holdBarsRandom
+                ? odly::resolveRandomHoldBars (instanceSeedForHold, phraseCounter, baseHoldBars)
+                : baseHoldBars;
 
-            odly::RawMidiEvent event;
-            event.isNoteOn = msg.isNoteOn();
-            event.channel = msg.getChannel();
-            event.pitch = msg.getNoteNumber();
-            event.velocity = static_cast<int> (msg.getVelocity() * 127.0f);
-            event.ppq = blockStartPpq + metadata.samplePosition * ppqPerSample;
+            // --- capture incoming note-on/note-off events into phrases ----
+            for (const auto metadata : midiMessages)
+            {
+                const auto msg = metadata.getMessage();
+                if (! (msg.isNoteOn() || msg.isNoteOff()))
+                    continue;   // everything else is dropped - OrchDelay only ever deals in notes
 
-            if (event.isNoteOn)
-                totalNotesCapturedUi.fetch_add (1);
+                odly::RawMidiEvent event;
+                event.isNoteOn = msg.isNoteOn();
+                event.channel = msg.getChannel();
+                event.pitch = msg.getNoteNumber();
+                event.velocity = static_cast<int> (msg.getVelocity() * 127.0f);
+                event.ppq = blockStartPpq + metadata.samplePosition * ppqPerSample;
 
-            auto result = odly::captureEvent (event, phraseGapBeats, holdBars, beatsPerBarNow,
-                                              nextNoteSeq, nextPhraseId, openPhrase);
+                if (event.isNoteOn)
+                    totalNotesCapturedUi.fetch_add (1);
 
-            if (result.phraseClosed && ! result.closedPhrase.notes.empty())
+                auto result = odly::captureEvent (event, phraseGapBeats, holdBars, beatsPerBarNow,
+                                                  nextNoteSeq, nextPhraseId, openPhrase);
+
+                if (result.phraseClosed && ! result.closedPhrase.notes.empty())
+                {
+                    ++phraseCounter;
+                    totalPhrasesClosedUi.fetch_add (1);
+                    lastScheduledFirePpqUi.store (result.closedPhrase.scheduledFirePpq);
+                    odly::Phrase closed = result.closedPhrase;
+                    resolveAndScheduleTransform (closed, transposeSemitones);
+                    pendingPhrases.push_back (closed);
+                }
+
+                // The live note-on/off is swallowed into the buffer, never
+                // passed through live - see Docs SS3.2 (only the delayed,
+                // possibly-transformed echo ever sounds).
+            }
+
+            // --- proactively close a finished phrase even with no new note ----
+            // Without this, a phrase whose last note is never followed by
+            // anything (a clip that ends, or the last take before the player
+            // stops) sits open forever and gets silently discarded on stop
+            // instead of firing back - see odly::checkPhraseTimeout's own doc
+            // comment.
+            if (auto timeoutResult = odly::checkPhraseTimeout (blockEndPpq, phraseGapBeats, holdBars,
+                                                                beatsPerBarNow, openPhrase);
+                timeoutResult.phraseClosed && ! timeoutResult.closedPhrase.notes.empty())
             {
                 ++phraseCounter;
                 totalPhrasesClosedUi.fetch_add (1);
-                lastScheduledFirePpqUi.store (result.closedPhrase.scheduledFirePpq);
-                odly::Phrase closed = result.closedPhrase;
+                lastScheduledFirePpqUi.store (timeoutResult.closedPhrase.scheduledFirePpq);
+                odly::Phrase closed = timeoutResult.closedPhrase;
                 resolveAndScheduleTransform (closed, transposeSemitones);
                 pendingPhrases.push_back (closed);
             }
-
-            // The live note-on/off is swallowed into the buffer, never
-            // passed through live - see Docs SS3.2 (only the delayed,
-            // possibly-transformed echo ever sounds).
-        }
-
-        // --- proactively close a finished phrase even with no new note ----
-        // Without this, a phrase whose last note is never followed by
-        // anything (a clip that ends, or the last take before the player
-        // stops) sits open forever and gets silently discarded on stop
-        // instead of firing back - see odly::checkPhraseTimeout's own doc
-        // comment.
-        if (auto timeoutResult = odly::checkPhraseTimeout (blockEndPpq, phraseGapBeats, holdBars,
-                                                            beatsPerBarNow, openPhrase);
-            timeoutResult.phraseClosed && ! timeoutResult.closedPhrase.notes.empty())
-        {
-            ++phraseCounter;
-            totalPhrasesClosedUi.fetch_add (1);
-            lastScheduledFirePpqUi.store (timeoutResult.closedPhrase.scheduledFirePpq);
-            odly::Phrase closed = timeoutResult.closedPhrase;
-            resolveAndScheduleTransform (closed, transposeSemitones);
-            pendingPhrases.push_back (closed);
         }
 
         furthestBlockPpqUi.store (blockEndPpq);
@@ -391,10 +427,54 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         // slightly-overdue note still fires (clamped into this block) at
         // worst a few ms late, rather than silently falling through a gap
         // between two blocks' own windows and never firing at all.
+        // Overlap Mode (see Docs SS17): governs whether a phrase's own
+        // FIRST note is allowed to start while an earlier phrase's notes
+        // are still audibly sounding (`!activeFiredNotes.empty()`, checked
+        // fresh per-phrase below, never precomputed once - that's what
+        // makes "only the oldest queued answer releases per busy period"
+        // fall out naturally: the moment one phrase's first note fires, it
+        // adds to activeFiredNotes immediately, so the NEXT phrase checked
+        // in this same pass correctly sees the device as busy again). Once
+        // a phrase has started, its own remaining notes are NEVER re-gated
+        // against busy state - only inter-phrase collisions are managed,
+        // never a single answer's own internal texture (e.g. a Stretched
+        // phrase's own notes overlapping each other is left alone).
+        const int overlapMode = overlapModeParameter != nullptr
+            ? juce::jlimit (0, 2, juce::roundToInt (overlapModeParameter->load())) : 0;
+
         for (auto& phrase : pendingPhrases)
         {
             if (phrase.fired || ! phrase.closed)
                 continue;
+
+            const bool started = std::any_of (phrase.outputNotes.begin(), phrase.outputNotes.end(),
+                                              [] (const odly::ScheduledNote& n) { return n.emitted; });
+
+            if (! started && overlapMode != odly::kOverlapOverlap && ! phrase.outputNotes.empty()
+                && phrase.outputNotes.front().outputOnsetPpq < blockEndPpq)
+            {
+                if (! activeFiredNotes.empty())
+                {
+                    if (overlapMode == odly::kOverlapSkip)
+                    {
+                        phrase.fired = true;   // discard entirely - never sounds
+                        totalPhrasesSkippedBusyUi.fetch_add (1);
+                    }
+                    // Wait: leave it pending untouched, re-checked next
+                    // block - do NOT fall through to the per-note loop
+                    // below, which would fire its already-overdue notes now.
+                    continue;
+                }
+
+                // Not busy - release it. If it had been waiting (overdue),
+                // shift its whole remaining schedule to start right now,
+                // preserving its own internal rhythm rather than firing
+                // every already-overdue note in one clump the instant the
+                // coast clears.
+                const double shift = blockStartPpq - phrase.outputNotes.front().outputOnsetPpq;
+                if (shift > 0.0)
+                    odly::shiftOutputNotes (phrase, shift);
+            }
 
             bool anyStillPending = false;
 
@@ -575,11 +655,32 @@ juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::cre
         "Bypass",
         false));
 
-    // The core "how far in the future" control - the whole point of the device.
+    // The core "how far in the future" control - the whole point of the
+    // device. 0 is a dedicated "pause capturing" state (see Docs SS17) -
+    // the parrot stops listening for new phrases entirely until raised back
+    // to 1+, without needing a hard Bypass reset.
     params.push_back (std::make_unique<juce::AudioParameterInt> (
         juce::ParameterID { "holdBars", 1 },
         "Hold Bars",
-        1, 16, 4));
+        0, 16, 4));
+
+    // When on, drawn per phrase from [1, Hold Bars] instead of the fixed
+    // value - never 0, a random draw should never silently re-enable
+    // capturing by chance if the base Hold Bars is deliberately paused (see
+    // odly::resolveRandomHoldBars).
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "holdBarsRandom", 1 },
+        "Random Hold Bars",
+        false));
+
+    // Governs what happens when a due answer's own start collides with an
+    // earlier answer still audibly sounding (see Docs SS17 - not every
+    // instrument downstream is polyphonic, most of an orchestra isn't).
+    params.push_back (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "overlapMode", 1 },
+        "Overlap Mode",
+        juce::StringArray { "Overlap", "Wait", "Skip" },
+        0));
 
     // Silence-gap threshold that closes a captured phrase - exposed (unlike
     // OrchPiano's own hardcoded 1.0-beat equivalent), since phrase length

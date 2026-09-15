@@ -284,6 +284,15 @@ namespace odly
         return out;
     }
 
+    void shiftOutputNotes (Phrase& phrase, double shiftPpq)
+    {
+        for (auto& note : phrase.outputNotes)
+        {
+            note.outputOnsetPpq += shiftPpq;
+            note.outputOffPpq += shiftPpq;
+        }
+    }
+
     // --- Restlessness-driven proposal (see this file's header) ---------------
 
     juce::uint32 fnv1aHash (int a, int b, int salt)
@@ -417,5 +426,16 @@ namespace odly
 
         const juce::uint32 h = fnv1aHash (instanceSeed, phraseCounter, 7);   // salt 7
         return candidates[h % static_cast<juce::uint32> (candidates.size())];
+    }
+
+    int resolveRandomHoldBars (int instanceSeed, int phraseCounter, int ceilingBars)
+    {
+        const int ceiling = juce::jlimit (1, 16, ceilingBars);
+        if (ceiling <= 1)
+            return 1;
+
+        const float unit = hashUnit (instanceSeed, phraseCounter, 8);   // salt 8
+        const int offset = juce::jlimit (0, ceiling - 1, static_cast<int> (unit * static_cast<float> (ceiling)));
+        return 1 + offset;
     }
 }

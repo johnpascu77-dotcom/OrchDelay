@@ -565,6 +565,43 @@ int main()
         check (distinctValues == 2, "resolveRandomQuantizedStretchPercent: draws more than one distinct legal ratio across a sample");
     }
 
+    // --- shiftOutputNotes: used by Overlap Mode "Wait" to release a queued answer ---
+    {
+        odly::Phrase p;
+        p.phraseStartPpq = 0.0;
+        p.phraseEndPpq = 2.0;
+        p.scheduledFirePpq = 8.0;
+        odly::ScheduledNote a; a.outputOnsetPpq = 8.0; a.outputOffPpq = 8.9;
+        odly::ScheduledNote b; b.outputOnsetPpq = 9.0; b.outputOffPpq = 9.9;
+        p.outputNotes = { a, b };
+
+        odly::shiftOutputNotes (p, 5.0);
+        check (std::abs (p.outputNotes[0].outputOnsetPpq - 13.0) < 1e-9 && std::abs (p.outputNotes[0].outputOffPpq - 13.9) < 1e-9,
+              "shiftOutputNotes: shifts the first note's onset AND off by the same amount");
+        check (std::abs (p.outputNotes[1].outputOnsetPpq - 14.0) < 1e-9 && std::abs (p.outputNotes[1].outputOffPpq - 14.9) < 1e-9,
+              "shiftOutputNotes: shifts every note, preserving the phrase's own internal spacing (1 beat apart, still)");
+    }
+
+    // --- resolveRandomHoldBars: [1, ceiling], never 0 -------------------------
+    {
+        const int a = odly::resolveRandomHoldBars (5, 3, 8);
+        const int b = odly::resolveRandomHoldBars (5, 3, 8);
+        check (a == b, "resolveRandomHoldBars: identical inputs always produce identical outputs (determinism)");
+        check (a >= 1 && a <= 8, "resolveRandomHoldBars: result stays within [1, ceiling]");
+        check (odly::resolveRandomHoldBars (5, 3, 1) == 1, "resolveRandomHoldBars: a ceiling of 1 always resolves to 1");
+
+        bool sawLow = false, sawHigh = false, everZero = false;
+        for (int i = 0; i < 100; ++i)
+        {
+            const int v = odly::resolveRandomHoldBars (5, i, 16);
+            if (v <= 4) sawLow = true;
+            if (v >= 13) sawHigh = true;
+            if (v < 1) everZero = true;
+        }
+        check (! everZero, "resolveRandomHoldBars: NEVER draws 0 across a sample - Hold Bars=0 is a dedicated pause state, not a random outcome");
+        check (sawLow && sawHigh, "resolveRandomHoldBars: spreads across the full range, not clustered at one end");
+    }
+
     std::cout << "-------------------------\n";
     if (failures == 0)
     {

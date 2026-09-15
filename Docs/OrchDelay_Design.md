@@ -514,6 +514,73 @@ unused if the phrase's resolved transform isn't Stretch.
 10 new test assertions (97 total, all passing): the ratio vocabulary's own sanity (includes 100%, real
 size), `snapToQuantizedStretch` exact-value/near-value/tie-breaking behavior, and
 `resolveRandomQuantizedStretchPercent`'s determinism, exact-legal-value guarantee, bound restriction
-in both directions, the 100%-bound no-range case, and multi-value spread across a sample. Rebuilt +
-reinstalled, Build ~16:07 UTC 2026-09-15. **Not yet live-tested** - required before calling this
-actually done, per this repo's own established discipline.
+in both directions, the 100%-bound no-range case, and multi-value spread across a sample.
+
+**RESOLVED**: live-tested successfully.
+
+## SS17. Overlap Mode + Random/Pause Hold Bars
+
+Prompted by a direct question from the user: what happens when a wide-stretched answer is still
+playing and a NEW answer becomes due? Answer, confirmed against the actual code: nothing coordinates
+them - `pendingPhrases` and the fire loop check every pending phrase's notes against the current
+block every time, with no gate at all, so a new echo starts firing right on top of an old one if
+their timing coincides. Deliberately kept as-is for piano-friendly polyphonic material ("the
+overlapping ... can be useful as is now"), but the user also wants explicit alternatives, since most
+orchestral instruments aren't polyphonic. Two further, smaller requests arrived in the same
+conversation: a Random toggle for Hold Bars (matching the pattern already established for Transpose/
+Rotation/Length/Stretch), and a dedicated "pause capturing" state via `Hold Bars = 0` so a very
+responsive setting doesn't make "the parrot ... too annoying" - a way to give it a rest without a
+hard Bypass reset.
+
+**Overlap Mode** - new `overlapMode` choice parameter, 3 values:
+- **Overlap** (default) - today's original behavior, unchanged, preserved deliberately for material
+  where layering/canon-style overlap is wanted (piano, pad-like material).
+- **Wait** - a due answer whose own first note hasn't fired yet is held back while
+  `!activeFiredNotes.empty()` (something from an earlier answer is still audibly sounding). The
+  moment it's released, `odly::shiftOutputNotes()` shifts its ENTIRE remaining schedule forward by
+  however long it waited, preserving its own internal rhythm exactly rather than firing every
+  already-overdue note in one clump the instant the coast clears. Confirmed with the user: when
+  several answers pile up waiting during one busy period, only the OLDEST releases when it's clear -
+  it becomes the new "busy" source for the others, so exactly one voice sounds at a time. This falls
+  out for free from checking `activeFiredNotes.empty()` freshly at each phrase's own decision point
+  inside the fire loop (never precomputed once per block) - the moment the oldest phrase's first note
+  fires, it's already reflected in `activeFiredNotes` by the time the next pending phrase is checked
+  in the same pass.
+- **Skip** - a due answer that's busy at the exact moment it becomes due is discarded outright,
+  permanently (never re-checked once marked `fired=true` with nothing emitted) - it does not wait for
+  the busy period to end and then fire late; that would be indistinguishable from Wait mode.
+
+Both Wait and Skip only ever gate a phrase's own FIRST note. Once a phrase has started (any note
+already emitted), none of its own later notes are ever re-gated against busy state - only
+INTER-phrase collisions are managed; a single answer's own internal texture (e.g. a Stretched
+phrase's own notes overlapping each other) is left alone entirely, matching the user's own framing of
+the question (one answer colliding with another, not a phrase colliding with itself).
+
+**Random Hold Bars** - new `holdBarsRandom` bool, same convention as Length: drawn per phrase from
+`[1, Hold Bars]` via `odly::resolveRandomHoldBars` (salt 8) - deliberately never 0, so a random draw
+can never silently re-enable capturing by chance while deliberately paused.
+
+**Hold Bars = 0 - dedicated pause state**: `holdBars` parameter range widened from `1-16` to `0-16`.
+When the base (pre-random) value is exactly 0, ALL capture-related logic is skipped entirely for that
+block - the note-capture loop, `checkPhraseTimeout`, and the stop-triggered "close the still-open
+phrase" logic all sit behind `if (baseHoldBars > 0)` gates. Per the user's own confirmed choice: live
+notes continue to be silently absorbed exactly as they always are (never passed through, unchanged
+from Docs SS3.2) - Hold Bars=0 is specifically "stop capturing new material," not "let me hear myself
+while paused." Already-pending/mid-hold phrases from before the pause are completely unaffected,
+since only the fire and note-off loops (unconditional, never gated) touch them - pausing never cancels
+an already-promised echo, consistent with every other "don't discard scheduled material casually"
+decision already made in this plugin (SS10 especially). A still-open (uncaptured-yet) phrase frozen at
+the moment of pausing is left exactly as it was rather than force-closed by a stop event that happens
+while paused - it resumes normally the moment Hold Bars is raised back to 1+.
+
+A new `totalPhrasesSkippedBusyUi` diagnostic counter (`skip N` in the status line) tracks Skip-mode
+discards, extending the same diagnostic discipline established across SS9-SS12.
+
+12 new test assertions (109 total, all passing): `shiftOutputNotes` (shifts both onset and off,
+preserves inter-note spacing) and `resolveRandomHoldBars` (determinism, range bound, ceiling-of-1
+edge case, NEVER draws 0, spreads across the full range). The Overlap Mode busy-gating/release/shift
+logic itself lives in the processor (real-time `activeFiredNotes` state, not expressible as a pure
+`odly::` function beyond the shift itself) and isn't covered by `OrchDelayLogicCheck` - a known
+verification gap, same category as the stop/rewind transport-transition logic noted after SS10.
+Rebuilt + reinstalled, Build ~16:40 UTC 2026-09-15. **Not yet live-tested** - required before calling
+this actually done, per this repo's own established discipline.

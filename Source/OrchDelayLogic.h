@@ -88,6 +88,18 @@ namespace odly
         kTransformStretch = 7
     };
 
+    // How a due answer behaves when an earlier answer is still audibly
+    // sounding - see Docs SS17. Not every instrument downstream is
+    // polyphonic (most of an orchestra isn't), so "just let them overlap"
+    // isn't always the right default, even though it's genuinely useful
+    // for piano-like material.
+    enum OverlapMode
+    {
+        kOverlapOverlap = 0,   // fire on schedule regardless - today's original behavior
+        kOverlapWait = 1,      // hold until the previous answer finishes, then play in full, own rhythm preserved
+        kOverlapSkip = 2       // if still busy when due, discard this answer entirely - never plays
+    };
+
     // A note-on/note-off/note-off-with-no-velocity event, the raw input this
     // logic groups into phrases. Mirrors just enough of juce::MidiMessage's
     // shape to stay host/JUCE-free at the call boundary while still being
@@ -268,6 +280,17 @@ namespace odly
     std::vector<ScheduledNote> buildOutputNotes (const Phrase& phrase, int transposeSemitones,
                                                  int rotationSteps, float lengthPercent, float stretchPercent);
 
+    // Shifts EVERY note in phrase.outputNotes forward by `shiftPpq` (adds it
+    // to both outputOnsetPpq and outputOffPpq) - used by Overlap Mode
+    // "Wait" (see Docs SS17): when a phrase's own first note was due but
+    // the device was still busy playing an earlier answer, this preserves
+    // the phrase's own internal rhythm once it's finally released to start,
+    // rather than firing every already-overdue note in a single clump the
+    // moment the coast clears. Call exactly once per phrase, right when
+    // it's released - never mutates already-emitted notes' meaning, since
+    // release only ever happens before a phrase's first note has fired.
+    void shiftOutputNotes (Phrase& phrase, double shiftPpq);
+
     // --- Restlessness-driven transform proposal -----------------------------
     // A stateless FNV-1a-style hash (byte-for-byte port of OrchGate's own
     // resolveResponseOverlay hash lambda, OrchGateProcessor.cpp ~line 580) -
@@ -331,6 +354,13 @@ namespace odly
     // only). boundPercent==100 always resolves to exactly 100 (no range).
     // Salt 6.
     float resolveRandomStretchPercent (int instanceSeed, int phraseCounter, float boundPercent);
+
+    // Same idea, for Hold Bars: drawn uniformly from [1, ceilingBars]
+    // (never 0 - Hold Bars=0 is the dedicated "pause capturing" state, see
+    // Docs SS17, and a random draw should never silently re-enable
+    // capturing by chance). ceilingBars is clamped to [1,16]; a ceiling of
+    // 1 always resolves to 1 (no range). Salt 8.
+    int resolveRandomHoldBars (int instanceSeed, int phraseCounter, int ceilingBars);
 
     // --- Quantized Stretch (see Docs SS16) ----------------------------------
     // The fixed vocabulary of "notation-friendly" Stretch ratios (%): simple

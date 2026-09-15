@@ -29,6 +29,10 @@ private:
 
     juce::Label holdBarsLabel;
     juce::Slider holdBarsSlider;
+    juce::ToggleButton holdBarsRandomButton;
+
+    juce::Label overlapModeLabel;
+    juce::ComboBox overlapModeBox;
 
     juce::Label phraseGapLabel;
     juce::Slider phraseGapSlider;
@@ -68,6 +72,8 @@ private:
 
     std::unique_ptr<ButtonAttachment> bypassAttachment;
     std::unique_ptr<SliderAttachment> holdBarsAttachment;
+    std::unique_ptr<ButtonAttachment> holdBarsRandomAttachment;
+    std::unique_ptr<ComboBoxAttachment> overlapModeAttachment;
     std::unique_ptr<SliderAttachment> phraseGapAttachment;
     std::unique_ptr<SliderAttachment> restlessnessAttachment;
     std::unique_ptr<ComboBoxAttachment> transformAttachment;
