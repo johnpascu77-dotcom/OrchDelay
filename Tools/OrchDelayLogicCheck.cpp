@@ -298,7 +298,7 @@ int main()
         p.notes.push_back (makeNote (2.0, 0.95, 64));
         p.notes.push_back (makeNote (3.0, 0.95, 65));
 
-        auto out = odly::buildOutputNotes (p, 0, 0, 100.0f, 100.0f);
+        auto out = odly::buildOutputNotes (p, 0, 0, 100.0f, 100.0f, 100.0f);
         check (out.size() == 4, "buildOutputNotes: same note count as the phrase");
         // Each note's own output onset = scheduledFirePpq + (its own onset - phraseStart) -
         // NOT all collapsed onto scheduledFirePpq itself.
@@ -408,42 +408,65 @@ int main()
               "stretch: factor is clamped to the documented [25%,400%] range");
     }
 
+    // --- applyIntervalScale: scales every interval from the phrase's own anchor ---
+    {
+        std::vector<odly::HeldNote> notes {
+            makeNote (0.0, 1.0, 60), makeNote (1.0, 1.0, 64), makeNote (2.0, 1.0, 67), makeNote (3.0, 1.0, 60)
+        };
+        auto out100 = odly::applyIntervalScale (notes, 100.0f);
+        check (out100[1].pitch == 64 && out100[2].pitch == 67, "interval: 100% leaves every pitch unchanged");
+
+        auto out200 = odly::applyIntervalScale (notes, 200.0f);
+        check (out200[0].pitch == 60, "interval: the anchor note itself never moves, regardless of factor");
+        check (out200[1].pitch == 68, "interval: 200% doubles the leap to note 2 (64 -> anchor+2*4 = 68)");
+        check (out200[2].pitch == 74, "interval: 200% doubles the leap to note 3 (67 -> anchor+2*7 = 74)");
+
+        auto out0 = odly::applyIntervalScale (notes, 0.0f);
+        check (out0[1].pitch == 60 && out0[2].pitch == 60,
+              "interval: 0% collapses every note onto the anchor pitch");
+
+        auto outEmpty = odly::applyIntervalScale ({}, 200.0f);
+        check (outEmpty.empty(), "interval: an empty phrase stays empty, no crash");
+    }
+
     // --- applyTransform dispatch ----------------------------------------------
     {
         std::vector<odly::HeldNote> notes {
             makeNote (0.0, 1.0, 60), makeNote (1.0, 1.0, 64), makeNote (2.0, 1.0, 67), makeNote (3.0, 1.0, 60)
         };
-        auto same = odly::applyTransform (notes, odly::kTransformNone, 0.0, 4.0, 12, 0, 100.0f, 100.0f);
+        auto same = odly::applyTransform (notes, odly::kTransformNone, 0.0, 4.0, 12, 0, 100.0f, 100.0f, 100.0f);
         check (same[0].pitch == 60, "applyTransform: kTransformNone returns input unchanged");
-        auto up = odly::applyTransform (notes, odly::kTransformTranspose, 0.0, 4.0, 12, 0, 100.0f, 100.0f);
+        auto up = odly::applyTransform (notes, odly::kTransformTranspose, 0.0, 4.0, 12, 0, 100.0f, 100.0f, 100.0f);
         check (up[0].pitch == 72, "applyTransform: dispatches to Transpose correctly");
-        auto rot = odly::applyTransform (notes, odly::kTransformRotation, 0.0, 4.0, 12, 1, 100.0f, 100.0f);
+        auto rot = odly::applyTransform (notes, odly::kTransformRotation, 0.0, 4.0, 12, 1, 100.0f, 100.0f, 100.0f);
         check (rot[0].pitch == 60 && rot[1].pitch == 60, "applyTransform: dispatches to Rotation correctly");
-        auto len = odly::applyTransform (notes, odly::kTransformLength, 0.0, 4.0, 12, 0, 50.0f, 100.0f);
+        auto len = odly::applyTransform (notes, odly::kTransformLength, 0.0, 4.0, 12, 0, 50.0f, 100.0f, 100.0f);
         check (len.size() == 2, "applyTransform: dispatches to Length correctly");
-        auto m7 = odly::applyTransform (notes, odly::kTransformM7, 0.0, 4.0, 12, 0, 100.0f, 100.0f);
+        auto m7 = odly::applyTransform (notes, odly::kTransformM7, 0.0, 4.0, 12, 0, 100.0f, 100.0f, 100.0f);
         check (m7[0].pitch == 60, "applyTransform: dispatches to M7 correctly");
-        auto stretch = odly::applyTransform (notes, odly::kTransformStretch, 0.0, 4.0, 12, 0, 100.0f, 200.0f);
+        auto stretch = odly::applyTransform (notes, odly::kTransformStretch, 0.0, 4.0, 12, 0, 100.0f, 200.0f, 100.0f);
         check (std::abs (stretch[1].onsetPpq - 2.0) < 1e-9, "applyTransform: dispatches to Stretch correctly");
+        auto interval = odly::applyTransform (notes, odly::kTransformInterval, 0.0, 4.0, 12, 0, 100.0f, 100.0f, 200.0f);
+        check (interval[1].pitch == 68, "applyTransform: dispatches to Interval correctly");
     }
 
-    // --- proposeTransform: 7-way pick now covers the full vocabulary --------
+    // --- proposeTransform: 8-way pick now covers the full vocabulary --------
     {
-        int seenKinds[8] = { 0 };   // index 0 unused (kTransformNone never proposed when applyAny)
+        int seenKinds[9] = { 0 };   // index 0 unused (kTransformNone never proposed when applyAny)
         bool everyPickInRange = true;
         for (int i = 0; i < 4000; ++i)
         {
             auto p = odly::proposeTransform (99, i, 1.0f);   // restlessness=1 -> always proposes
-            if (p.transformKind < odly::kTransformTranspose || p.transformKind > odly::kTransformStretch)
+            if (p.transformKind < odly::kTransformTranspose || p.transformKind > odly::kTransformInterval)
                 everyPickInRange = false;
             seenKinds[p.transformKind]++;
         }
-        check (everyPickInRange, "proposeTransform: always picks one of the 7 real transforms, never None, at restlessness=1");
+        check (everyPickInRange, "proposeTransform: always picks one of the 8 real transforms, never None, at restlessness=1");
 
         bool allSeen = true;
-        for (int k = odly::kTransformTranspose; k <= odly::kTransformStretch; ++k)
+        for (int k = odly::kTransformTranspose; k <= odly::kTransformInterval; ++k)
             if (seenKinds[k] == 0) allSeen = false;
-        check (allSeen, "proposeTransform: all 7 transforms (including the newly-added Stretch) get picked across a large sample");
+        check (allSeen, "proposeTransform: all 8 transforms (including the newly-added Interval) get picked across a large sample");
     }
 
     // --- resolveRandomTransposeSemitones: deterministic, ranged, symmetric ---
@@ -516,6 +539,20 @@ int main()
 
         check (std::abs (odly::resolveRandomStretchPercent (5, 3, 100.0f) - 100.0f) < 1e-6f,
               "resolveRandomStretchPercent: a bound of exactly 100% always resolves to 100% (no range)");
+    }
+
+    // --- resolveRandomIntervalPercent: same shape as Stretch's, salt 9 ------
+    {
+        const float a = odly::resolveRandomIntervalPercent (5, 3, 200.0f);
+        const float b = odly::resolveRandomIntervalPercent (5, 3, 200.0f);
+        check (std::abs (a - b) < 1e-6f, "resolveRandomIntervalPercent: identical inputs always produce identical outputs (determinism)");
+        check (a >= 100.0f && a <= 200.0f, "resolveRandomIntervalPercent: a bound ABOVE 100 draws only wider values, never below 100");
+
+        const float c = odly::resolveRandomIntervalPercent (5, 3, 50.0f);
+        check (c >= 50.0f && c <= 100.0f, "resolveRandomIntervalPercent: a bound BELOW 100 draws only narrower values, never above 100");
+
+        check (std::abs (odly::resolveRandomIntervalPercent (5, 3, 100.0f) - 100.0f) < 1e-6f,
+              "resolveRandomIntervalPercent: a bound of exactly 100% always resolves to 100% (no range)");
     }
 
     // --- Quantized Stretch: a fixed notation-friendly ratio vocabulary ------

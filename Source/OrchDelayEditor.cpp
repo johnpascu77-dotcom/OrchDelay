@@ -15,7 +15,7 @@ namespace
 OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
-    setSize (520, 860);
+    setSize (520, 914);
 
     titleLabel.setText ("OrchDelay", juce::dontSendNotification);
     titleLabel.setJustificationType (juce::Justification::centred);
@@ -98,6 +98,7 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     transformBox.addItem ("Length", 7);
     transformBox.addItem ("M7", 8);
     transformBox.addItem ("Stretch", 9);
+    transformBox.addItem ("Interval", 10);
     transformBox.setColour (juce::ComboBox::backgroundColourId, kBoxBackground);
     transformBox.setColour (juce::ComboBox::textColourId, juce::Colours::white);
     transformBox.setColour (juce::ComboBox::outlineColourId, kOutline);
@@ -137,6 +138,13 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     stretchQuantizedButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
     addAndMakeVisible (stretchQuantizedButton);
 
+    setupLabel (intervalLabel, "Interval Scale (%)");
+    addAndMakeVisible (intervalLabel);
+    setupSlider (intervalSlider);
+    intervalRandomButton.setButtonText ("Random");
+    intervalRandomButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
+    addAndMakeVisible (intervalRandomButton);
+
     setupLabel (instanceSeedLabel, "Instance Seed");
     addAndMakeVisible (instanceSeedLabel);
     setupSlider (instanceSeedSlider);
@@ -169,6 +177,8 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     stretchAttachment = std::make_unique<SliderAttachment> (state, "stretchPercent", stretchSlider);
     stretchRandomAttachment = std::make_unique<ButtonAttachment> (state, "stretchRandom", stretchRandomButton);
     stretchQuantizedAttachment = std::make_unique<ButtonAttachment> (state, "stretchQuantized", stretchQuantizedButton);
+    intervalAttachment = std::make_unique<SliderAttachment> (state, "intervalScalePercent", intervalSlider);
+    intervalRandomAttachment = std::make_unique<ButtonAttachment> (state, "intervalRandom", intervalRandomButton);
     instanceSeedAttachment = std::make_unique<SliderAttachment> (state, "instanceSeed", instanceSeedSlider);
 
     startTimerHz (4);
@@ -250,6 +260,13 @@ void OrchDelayAudioProcessorEditor::resized()
     stretchRandomButton.setBounds (stretchRow.removeFromRight (75));
     stretchRow.removeFromRight (8);
     stretchSlider.setBounds (stretchRow);
+    area.removeFromTop (8);
+
+    intervalLabel.setBounds (row (18));
+    auto intervalRow = row();
+    intervalRandomButton.setBounds (intervalRow.removeFromRight (75));
+    intervalRow.removeFromRight (8);
+    intervalSlider.setBounds (intervalRow);
     area.removeFromTop (8);
 
     instanceSeedLabel.setBounds (row (18));

@@ -582,5 +582,45 @@ edge case, NEVER draws 0, spreads across the full range). The Overlap Mode busy-
 logic itself lives in the processor (real-time `activeFiredNotes` state, not expressible as a pure
 `odly::` function beyond the shift itself) and isn't covered by `OrchDelayLogicCheck` - a known
 verification gap, same category as the stop/rewind transport-transition logic noted after SS10.
-Rebuilt + reinstalled, Build ~16:40 UTC 2026-09-15. **Not yet live-tested** - required before calling
-this actually done, per this repo's own established discipline.
+Rebuilt + reinstalled, Build ~16:40 UTC 2026-09-15.
+
+**RESOLVED**: live-tested successfully ("all tested OK"), pushed (`5cff25f..df99c8f`).
+
+## SS18. The "second list" - 5 deferred ideas from the transcript review, taken on together
+
+Before this session, a background agent mined the archived ChatGPT "Parrot" transcript (see SS16's
+own lead-in) for ideas not yet built, deferred as a "second list." The user asked how each would
+actually behave musically before committing to any of them; given a plain description of each in
+action (no implementation detail), the response was to greenlight all 5 and delegate implementation
+order. Order chosen deliberately: smallest/most self-contained first, most architecturally
+significant (reopens the swallow-only design) last, so each lands on solid ground before the next:
+1. Interval expansion/contraction (this entry)
+2. Content-aware transform weighting
+3. Phrase-quality gate
+4. Multi-motive memory bank
+5. Overlay/Ducking capture modes
+
+### Interval expansion/contraction (kTransformInterval, 9th transform)
+
+`odly::applyIntervalScale(notes, scalePercent)` scales every note's own interval from the phrase's
+OWN anchor note (its first/anchor note, same convention as Inversion) by `scalePercent/100`: 100% =
+unchanged, >100% widens the melodic shape's leaps (same contour, reaching further), <100% narrows it
+(converging toward the anchor as percent→0, where every note collapses onto the anchor pitch). No
+MPL/transcript precedent - the user's own idea, surfaced directly in conversation, not mined from the
+transcript. Distinct from every existing transform: Transpose shifts the whole phrase together
+(shape unchanged), Inversion mirrors the shape (exact interval sizes preserved) - this is the one
+that changes the SIZE of the melodic shape while keeping its up/down silhouette recognizable.
+
+`TransformKind` extended to 9 entries (`kTransformInterval=8`); `proposeTransform`'s equal-weight pick
+widened 7-way → 8-way; `Transform` choice parameter grew from 9 to 10 items. New parameters:
+`intervalScalePercent` (Float 0-300%, default 150% - deliberately NOT the 100% no-op, so picking
+"Interval" from the menu is immediately audible, matching Transpose/Rotation's own choice to default
+away from silence) and `intervalRandom` (Bool) - `odly::resolveRandomIntervalPercent` (salt 9) uses
+the same asymmetric-bound convention as Random Stretch, since Interval's neutral point is also 100%,
+not 0. Editor gained an Interval Scale slider + Random toggle row; window height 860→914.
+
+11 new test assertions (120 total, all passing): `applyIntervalScale` (100%/200%/0%/empty exact math,
+anchor-never-moves), dispatch, 8-way proposal coverage, and `resolveRandomIntervalPercent`'s
+asymmetric-bound behavior in both directions. Rebuilt + reinstalled, Build ~17:22 UTC 2026-09-15.
+**Not yet live-tested** - required before calling this actually done, per this repo's own established
+discipline.

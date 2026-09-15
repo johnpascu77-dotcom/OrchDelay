@@ -85,7 +85,8 @@ namespace odly
         kTransformRotation = 4,
         kTransformLength = 5,
         kTransformM7 = 6,
-        kTransformStretch = 7
+        kTransformStretch = 7,
+        kTransformInterval = 8
     };
 
     // How a due answer behaves when an earlier answer is still audibly
@@ -246,6 +247,19 @@ namespace odly
     // grid dependency - the one v1.1 transform that ports over unchanged.
     std::vector<HeldNote> applyM7 (const std::vector<HeldNote>& notes);
 
+    // Scales every note's own interval from the phrase's OWN anchor note
+    // (its first/anchor note, same convention as Inversion) by
+    // `scalePercent/100` - 100% = unchanged, >100% widens the melodic
+    // shape's leaps (the same contour, reaching further), <100% narrows it
+    // (converging toward the anchor as the percent approaches 0, where
+    // every note collapses onto the anchor pitch itself). Distinct from
+    // Transpose (shifts the whole phrase together, shape unchanged) and
+    // Inversion (mirrors the shape, exact interval sizes preserved) - this
+    // is the one transform that changes the SIZE of the melodic shape while
+    // keeping its up/down silhouette recognizable. No MPL/transcript
+    // precedent - the user's own idea, surfaced directly.
+    std::vector<HeldNote> applyIntervalScale (const std::vector<HeldNote>& notes, float scalePercent);
+
     // Proportional time-stretch: rescales every note's onset (relative to
     // the phrase's OWN start) and duration by `stretchPercent/100` -
     // 100% = unchanged, <100% = the echo plays back faster/shorter,
@@ -266,7 +280,8 @@ namespace odly
     // returns the input unchanged (a plain copy).
     std::vector<HeldNote> applyTransform (const std::vector<HeldNote>& notes, int transformKind,
                                           double phraseStartPpq, double phraseEndPpq, int transposeSemitones,
-                                          int rotationSteps, float lengthPercent, float stretchPercent);
+                                          int rotationSteps, float lengthPercent, float stretchPercent,
+                                          float intervalScalePercent);
 
     // Resolves `phrase`'s chosen transform AND the schedule-time shift
     // (scheduledFirePpq relative to phraseStartPpq) into a list of
@@ -278,7 +293,8 @@ namespace odly
     // phrase's notes into a single block's emission (see Phrase's own doc
     // comment for why that used to be a real bug).
     std::vector<ScheduledNote> buildOutputNotes (const Phrase& phrase, int transposeSemitones,
-                                                 int rotationSteps, float lengthPercent, float stretchPercent);
+                                                 int rotationSteps, float lengthPercent, float stretchPercent,
+                                                 float intervalScalePercent);
 
     // Shifts EVERY note in phrase.outputNotes forward by `shiftPpq` (adds it
     // to both outputOnsetPpq and outputOffPpq) - used by Overlap Mode
@@ -311,11 +327,11 @@ namespace odly
 
     // restlessness (0..1) IS the probability of proposing a non-verbatim
     // transform for this phrase - at 0, always verbatim; at 1, always
-    // transforms. If applyAny, an equal-weight 7-way pick among the full
+    // transforms. If applyAny, an equal-weight 8-way pick among the full
     // transform vocabulary - Transpose/Retrograde/Inversion/Rotation/
-    // Length/M7/Stretch (no evidence yet to favor one - see Docs SS7;
-    // extended 3-way -> 6-way -> 7-way as Rotation/Length/M7, then Stretch,
-    // were added).
+    // Length/M7/Stretch/Interval (no evidence yet to favor one - see Docs
+    // SS7; extended 3-way -> 6-way -> 7-way -> 8-way as Rotation/Length/M7,
+    // then Stretch, then Interval, were added).
     // `instanceSeed`: this OrchDelay instance's own identity (0-127 param).
     // `phraseCounter`: increments once per phrase closure - takes the role
     // OrchGate's broadcast "mode" CC plays, since v1 has no OrchConductor
@@ -361,6 +377,11 @@ namespace odly
     // capturing by chance). ceilingBars is clamped to [1,16]; a ceiling of
     // 1 always resolves to 1 (no range). Salt 8.
     int resolveRandomHoldBars (int instanceSeed, int phraseCounter, int ceilingBars);
+
+    // Same asymmetric-bound convention as resolveRandomStretchPercent -
+    // Interval's own neutral point is also 100% (unchanged), not 0 - draws
+    // uniformly between 100% and `boundPercent`. Salt 9.
+    float resolveRandomIntervalPercent (int instanceSeed, int phraseCounter, float boundPercent);
 
     // --- Quantized Stretch (see Docs SS16) ----------------------------------
     // The fixed vocabulary of "notation-friendly" Stretch ratios (%): simple

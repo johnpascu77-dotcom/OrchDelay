@@ -31,6 +31,8 @@ OrchDelayAudioProcessor::OrchDelayAudioProcessor()
     stretchPercentParameter = parameters.getRawParameterValue ("stretchPercent");
     stretchRandomParameter = parameters.getRawParameterValue ("stretchRandom");
     stretchQuantizedParameter = parameters.getRawParameterValue ("stretchQuantized");
+    intervalScalePercentParameter = parameters.getRawParameterValue ("intervalScalePercent");
+    intervalRandomParameter = parameters.getRawParameterValue ("intervalRandom");
     instanceSeedParameter = parameters.getRawParameterValue ("instanceSeed");
 }
 
@@ -96,17 +98,20 @@ void OrchDelayAudioProcessor::resolveAndScheduleTransform (odly::Phrase& phrase,
     const bool lengthRandom = lengthRandomParameter != nullptr && lengthRandomParameter->load() >= 0.5f;
     const bool stretchRandom = stretchRandomParameter != nullptr && stretchRandomParameter->load() >= 0.5f;
     const bool stretchQuantized = stretchQuantizedParameter != nullptr && stretchQuantizedParameter->load() >= 0.5f;
+    const bool intervalRandom = intervalRandomParameter != nullptr && intervalRandomParameter->load() >= 0.5f;
     const int rotationSteps = rotationStepsParameter != nullptr
         ? juce::roundToInt (rotationStepsParameter->load()) : 0;
     const float lengthPercent = lengthPercentParameter != nullptr
         ? juce::jlimit (0.0f, 100.0f, lengthPercentParameter->load()) : 100.0f;
     const float stretchPercent = stretchPercentParameter != nullptr
         ? juce::jlimit (25.0f, 400.0f, stretchPercentParameter->load()) : 100.0f;
+    const float intervalScalePercent = intervalScalePercentParameter != nullptr
+        ? juce::jlimit (0.0f, 300.0f, intervalScalePercentParameter->load()) : 150.0f;
 
     // Choice indices: 0=Follow Restlessness, 1=None, 2=Transpose, 3=Retrograde,
-    // 4=Inversion, 5=Rotation, 6=Length, 7=M7 - any explicit choice (>0)
-    // always wins outright, no blending with the proposal mechanism (see
-    // this header's own doc comment).
+    // 4=Inversion, 5=Rotation, 6=Length, 7=M7, 8=Stretch, 9=Interval - any
+    // explicit choice (>0) always wins outright, no blending with the
+    // proposal mechanism (see this header's own doc comment).
     if (manualChoice > 0)
         phrase.chosenTransform = manualChoice - 1;   // maps directly onto odly::TransformKind
     else
@@ -147,13 +152,16 @@ void OrchDelayAudioProcessor::resolveAndScheduleTransform (odly::Phrase& phrase,
         return stretchPercent;
     }();
     lastResolvedStretchPercentUi.store (resolvedStretchPercent);
+    const float resolvedIntervalScalePercent = intervalRandom
+        ? odly::resolveRandomIntervalPercent (instanceSeed, phraseCounter, intervalScalePercent)
+        : intervalScalePercent;
 
     // Built ONCE here, not re-derived at fire time - see odly::Phrase's own
     // doc comment for why bundling a phrase's notes into one block's
     // emission (the old approach) was a real bug.
     phrase.outputNotes = odly::buildOutputNotes (phrase, resolvedTransposeSemitones,
                                                  resolvedRotationSteps, resolvedLengthPercent,
-                                                 resolvedStretchPercent);
+                                                 resolvedStretchPercent, resolvedIntervalScalePercent);
 }
 
 void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
@@ -719,7 +727,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::cre
         juce::ParameterID { "manualTransform", 1 },
         "Transform",
         juce::StringArray { "Follow Restlessness", "None", "Transpose", "Retrograde", "Inversion",
-                            "Rotation", "Length", "M7", "Stretch" },
+                            "Rotation", "Length", "M7", "Stretch", "Interval" },
         0));
 
     params.push_back (std::make_unique<juce::AudioParameterInt> (
@@ -820,6 +828,37 @@ juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::cre
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "stretchQuantized", 1 },
         "Quantized Stretch",
+        false));
+
+    // Scales every note's interval from the phrase's own anchor note (see
+    // odly::applyIntervalScale) - 100% = unchanged, >100% widens the
+    // melodic shape's leaps, <100% narrows them. Defaults to 150% (not the
+    // 100% no-op) so picking "Interval" from the Transform menu is
+    // immediately audible, matching Transpose/Rotation's own choice to
+    // default away from silence.
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "intervalScalePercent", 1 },
+        "Interval Scale (%)",
+        juce::NormalisableRange<float> (0.0f, 300.0f, 1.0f),
+        150.0f,
+        juce::AudioParameterFloatAttributes()
+            .withLabel ("%")
+            .withStringFromValueFunction ([] (float value, int)
+            {
+                return juce::String (juce::roundToInt (value)) + "%";
+            })
+            .withValueFromStringFunction ([] (const juce::String& text)
+            {
+                return text.retainCharacters ("0123456789.").getFloatValue();
+            })));
+
+    // When on, drawn per phrase from [100%, Interval Scale%] (whichever side
+    // of 100 the slider sits on) instead of the fixed value - same
+    // asymmetric-bound convention as Random Stretch, since Interval Scale's
+    // neutral point is also 100%, not 0 - see odly::resolveRandomIntervalPercent.
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "intervalRandom", 1 },
+        "Random Interval",
         false));
 
     // This instance's own hash key for the restlessness proposal (see

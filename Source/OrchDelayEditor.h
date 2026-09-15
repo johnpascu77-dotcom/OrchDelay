@@ -60,6 +60,10 @@ private:
     juce::ToggleButton stretchRandomButton;
     juce::ToggleButton stretchQuantizedButton;
 
+    juce::Label intervalLabel;
+    juce::Slider intervalSlider;
+    juce::ToggleButton intervalRandomButton;
+
     juce::Label instanceSeedLabel;
     juce::Slider instanceSeedSlider;
     juce::TextButton randomizeSeedButton;
@@ -86,6 +90,8 @@ private:
     std::unique_ptr<SliderAttachment> stretchAttachment;
     std::unique_ptr<ButtonAttachment> stretchRandomAttachment;
     std::unique_ptr<ButtonAttachment> stretchQuantizedAttachment;
+    std::unique_ptr<SliderAttachment> intervalAttachment;
+    std::unique_ptr<ButtonAttachment> intervalRandomAttachment;
     std::unique_ptr<SliderAttachment> instanceSeedAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (OrchDelayAudioProcessorEditor)

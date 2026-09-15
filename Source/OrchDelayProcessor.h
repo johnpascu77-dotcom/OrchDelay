@@ -86,6 +86,8 @@ private:
     std::atomic<float>* stretchPercentParameter = nullptr;
     std::atomic<float>* stretchRandomParameter = nullptr;
     std::atomic<float>* stretchQuantizedParameter = nullptr;
+    std::atomic<float>* intervalScalePercentParameter = nullptr;
+    std::atomic<float>* intervalRandomParameter = nullptr;
     std::atomic<float>* instanceSeedParameter = nullptr;
 
     double sampleRate = 44100.0;

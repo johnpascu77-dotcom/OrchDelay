@@ -240,9 +240,28 @@ namespace odly
         return out;
     }
 
+    std::vector<HeldNote> applyIntervalScale (const std::vector<HeldNote>& notes, float scalePercent)
+    {
+        std::vector<HeldNote> out = notes;
+        if (out.empty())
+            return out;
+
+        const int anchor = out.front().pitch;
+        const float factor = juce::jlimit (0.0f, 300.0f, scalePercent) / 100.0f;
+
+        for (auto& n : out)
+        {
+            const int interval = n.pitch - anchor;
+            n.pitch = juce::jlimit (0, 127, anchor + juce::roundToInt (static_cast<float> (interval) * factor));
+        }
+
+        return out;
+    }
+
     std::vector<HeldNote> applyTransform (const std::vector<HeldNote>& notes, int transformKind,
                                           double phraseStartPpq, double phraseEndPpq, int transposeSemitones,
-                                          int rotationSteps, float lengthPercent, float stretchPercent)
+                                          int rotationSteps, float lengthPercent, float stretchPercent,
+                                          float intervalScalePercent)
     {
         switch (transformKind)
         {
@@ -253,18 +272,20 @@ namespace odly
             case kTransformLength:     return applyLength (notes, lengthPercent);
             case kTransformM7:         return applyM7 (notes);
             case kTransformStretch:    return applyStretch (notes, phraseStartPpq, stretchPercent);
+            case kTransformInterval:   return applyIntervalScale (notes, intervalScalePercent);
             case kTransformNone:
             default:                   return notes;
         }
     }
 
     std::vector<ScheduledNote> buildOutputNotes (const Phrase& phrase, int transposeSemitones,
-                                                 int rotationSteps, float lengthPercent, float stretchPercent)
+                                                 int rotationSteps, float lengthPercent, float stretchPercent,
+                                                 float intervalScalePercent)
     {
         const auto transformed = applyTransform (phrase.notes, phrase.chosenTransform,
                                                   phrase.phraseStartPpq, phrase.phraseEndPpq,
                                                   transposeSemitones, rotationSteps, lengthPercent,
-                                                  stretchPercent);
+                                                  stretchPercent, intervalScalePercent);
 
         std::vector<ScheduledNote> out;
         out.reserve (transformed.size());
@@ -327,8 +348,8 @@ namespace odly
             return proposal;
 
         const juce::uint32 h = fnv1aHash (instanceSeed, phraseCounter, 2);
-        // 1=Transpose,2=Retrograde,3=Inversion,4=Rotation,5=Length,6=M7,7=Stretch
-        proposal.transformKind = 1 + static_cast<int> (h % 7u);
+        // 1=Transpose,2=Retrograde,3=Inversion,4=Rotation,5=Length,6=M7,7=Stretch,8=Interval
+        proposal.transformKind = 1 + static_cast<int> (h % 8u);
         return proposal;
     }
 
@@ -437,5 +458,18 @@ namespace odly
         const float unit = hashUnit (instanceSeed, phraseCounter, 8);   // salt 8
         const int offset = juce::jlimit (0, ceiling - 1, static_cast<int> (unit * static_cast<float> (ceiling)));
         return 1 + offset;
+    }
+
+    float resolveRandomIntervalPercent (int instanceSeed, int phraseCounter, float boundPercent)
+    {
+        const float bound = juce::jlimit (0.0f, 300.0f, boundPercent);
+        const float diff = bound > 100.0f ? (bound - 100.0f) : (100.0f - bound);
+        if (diff < 1e-6f)
+            return 100.0f;
+
+        const float lo = juce::jmin (100.0f, bound);
+        const float hi = juce::jmax (100.0f, bound);
+        const float unit = hashUnit (instanceSeed, phraseCounter, 9);   // salt 9
+        return lo + unit * (hi - lo);
     }
 }
