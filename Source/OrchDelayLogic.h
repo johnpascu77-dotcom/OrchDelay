@@ -332,6 +332,36 @@ namespace odly
     // Salt 6.
     float resolveRandomStretchPercent (int instanceSeed, int phraseCounter, float boundPercent);
 
+    // --- Quantized Stretch (see Docs SS16) ----------------------------------
+    // The fixed vocabulary of "notation-friendly" Stretch ratios (%): simple
+    // integer relationships only - the binary family (powers of 2: 25/50/
+    // 100/200/400, clean diminution/augmentation), the ternary/compound
+    // family (thirds and the dotted-note ratio: 33.3/66.7/150/300), and two
+    // bridge ratios (75/133.3, a 3:4 relationship). An in-between percentage
+    // like 137% rescales a phrase's timing off any grid a notation program
+    // can render cleanly - this vocabulary exists so Quantized mode can
+    // restrict Stretch to ratios that stay notatable, the same "binary vs
+    // ternary family" framing OrchQuantizer's own rhythm engine already
+    // uses, applied here to a scaling factor instead of a beat subdivision.
+    const std::vector<float>& quantizedStretchRatios();
+
+    // Snaps `percent` to the nearest ratio in quantizedStretchRatios() - the
+    // resolution Quantized mode applies to a FIXED (non-random) Stretch
+    // value: aim the slider anywhere, the value actually used always lands
+    // on a notatable ratio.
+    float snapToQuantizedStretch (float percent);
+
+    // Resolves the ACTUAL stretch percentage when Random AND Quantized are
+    // BOTH on: draws UNIFORMLY from quantizedStretchRatios() restricted to
+    // whichever side of 100% `boundPercent` points toward (same bound
+    // convention as resolveRandomStretchPercent) - deliberately narrows the
+    // draw to the legal ratio set directly, rather than drawing a
+    // continuous value and snapping it afterward, which would silently bias
+    // the result toward whichever ratio sits nearest the middle of the
+    // continuous range instead of giving every legal ratio an equal chance.
+    // Salt 7, independent of every other seeded draw in this file.
+    float resolveRandomQuantizedStretchPercent (int instanceSeed, int phraseCounter, float boundPercent);
+
     // --- Stuck-note-cleanup discipline (see Docs SS2) -----------------------
     // A single note-off "occurrence" this OrchDelay instance owes the output
     // for something it fired earlier, tracked by seq so an overlapping

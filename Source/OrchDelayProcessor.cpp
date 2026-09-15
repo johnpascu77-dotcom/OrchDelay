@@ -28,6 +28,7 @@ OrchDelayAudioProcessor::OrchDelayAudioProcessor()
     lengthRandomParameter = parameters.getRawParameterValue ("lengthRandom");
     stretchPercentParameter = parameters.getRawParameterValue ("stretchPercent");
     stretchRandomParameter = parameters.getRawParameterValue ("stretchRandom");
+    stretchQuantizedParameter = parameters.getRawParameterValue ("stretchQuantized");
     instanceSeedParameter = parameters.getRawParameterValue ("instanceSeed");
 }
 
@@ -91,6 +92,7 @@ void OrchDelayAudioProcessor::resolveAndScheduleTransform (odly::Phrase& phrase,
     const bool rotationRandom = rotationRandomParameter != nullptr && rotationRandomParameter->load() >= 0.5f;
     const bool lengthRandom = lengthRandomParameter != nullptr && lengthRandomParameter->load() >= 0.5f;
     const bool stretchRandom = stretchRandomParameter != nullptr && stretchRandomParameter->load() >= 0.5f;
+    const bool stretchQuantized = stretchQuantizedParameter != nullptr && stretchQuantizedParameter->load() >= 0.5f;
     const int rotationSteps = rotationStepsParameter != nullptr
         ? juce::roundToInt (rotationStepsParameter->load()) : 0;
     const float lengthPercent = lengthPercentParameter != nullptr
@@ -126,9 +128,21 @@ void OrchDelayAudioProcessor::resolveAndScheduleTransform (odly::Phrase& phrase,
     const float resolvedLengthPercent = lengthRandom
         ? odly::resolveRandomLengthPercent (instanceSeed, phraseCounter, lengthPercent)
         : lengthPercent;
-    const float resolvedStretchPercent = stretchRandom
-        ? odly::resolveRandomStretchPercent (instanceSeed, phraseCounter, stretchPercent)
-        : stretchPercent;
+    // Quantized restricts Stretch to a fixed vocabulary of notation-friendly
+    // ratios (see Docs SS16). Combined with Random, the draw happens
+    // directly from that vocabulary (odly::resolveRandomQuantizedStretchPercent)
+    // rather than drawing a free value and snapping it afterward - narrows
+    // the choice instead of adding an escape hatch on top of one.
+    const float resolvedStretchPercent = [&]
+    {
+        if (stretchRandom && stretchQuantized)
+            return odly::resolveRandomQuantizedStretchPercent (instanceSeed, phraseCounter, stretchPercent);
+        if (stretchRandom)
+            return odly::resolveRandomStretchPercent (instanceSeed, phraseCounter, stretchPercent);
+        if (stretchQuantized)
+            return odly::snapToQuantizedStretch (stretchPercent);
+        return stretchPercent;
+    }();
     lastResolvedStretchPercentUi.store (resolvedStretchPercent);
 
     // Built ONCE here, not re-derived at fire time - see odly::Phrase's own
@@ -694,6 +708,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::cre
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "stretchRandom", 1 },
         "Random Stretch",
+        false));
+
+    // When on, restricts the actual stretch ratio used to a fixed vocabulary
+    // of "notation-friendly" values (see odly::quantizedStretchRatios) -
+    // arbitrary in-between percentages rescale a phrase's timing off any
+    // grid a notation program can render cleanly, so this snaps a fixed
+    // value to the nearest legal ratio, or (combined with Random Stretch)
+    // draws directly from the legal set instead of a free continuous range.
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "stretchQuantized", 1 },
+        "Quantized Stretch",
         false));
 
     // This instance's own hash key for the restlessness proposal (see

@@ -120,6 +120,9 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     stretchRandomButton.setButtonText ("Random");
     stretchRandomButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
     addAndMakeVisible (stretchRandomButton);
+    stretchQuantizedButton.setButtonText ("Quantize");
+    stretchQuantizedButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
+    addAndMakeVisible (stretchQuantizedButton);
 
     setupLabel (instanceSeedLabel, "Instance Seed");
     addAndMakeVisible (instanceSeedLabel);
@@ -150,6 +153,7 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     lengthRandomAttachment = std::make_unique<ButtonAttachment> (state, "lengthRandom", lengthRandomButton);
     stretchAttachment = std::make_unique<SliderAttachment> (state, "stretchPercent", stretchSlider);
     stretchRandomAttachment = std::make_unique<ButtonAttachment> (state, "stretchRandom", stretchRandomButton);
+    stretchQuantizedAttachment = std::make_unique<ButtonAttachment> (state, "stretchQuantized", stretchQuantizedButton);
     instanceSeedAttachment = std::make_unique<SliderAttachment> (state, "instanceSeed", instanceSeedSlider);
 
     startTimerHz (4);
@@ -219,7 +223,9 @@ void OrchDelayAudioProcessorEditor::resized()
 
     stretchLabel.setBounds (row (18));
     auto stretchRow = row();
-    stretchRandomButton.setBounds (stretchRow.removeFromRight (90));
+    stretchQuantizedButton.setBounds (stretchRow.removeFromRight (85));
+    stretchRow.removeFromRight (6);
+    stretchRandomButton.setBounds (stretchRow.removeFromRight (75));
     stretchRow.removeFromRight (8);
     stretchSlider.setBounds (stretchRow);
     area.removeFromTop (8);

@@ -369,4 +369,53 @@ namespace odly
         const float unit = hashUnit (instanceSeed, phraseCounter, 6);   // salt 6
         return lo + unit * (hi - lo);
     }
+
+    const std::vector<float>& quantizedStretchRatios()
+    {
+        static const std::vector<float> ratios {
+            25.0f, 100.0f / 3.0f, 50.0f, 200.0f / 3.0f, 75.0f, 100.0f,
+            400.0f / 3.0f, 150.0f, 200.0f, 300.0f, 400.0f
+        };
+        return ratios;
+    }
+
+    float snapToQuantizedStretch (float percent)
+    {
+        const auto& ratios = quantizedStretchRatios();
+        float best = ratios.front();
+        float bestDiff = percent > best ? (percent - best) : (best - percent);
+
+        for (float candidate : ratios)
+        {
+            const float diff = percent > candidate ? (percent - candidate) : (candidate - percent);
+            if (diff < bestDiff)
+            {
+                bestDiff = diff;
+                best = candidate;
+            }
+        }
+
+        return best;
+    }
+
+    float resolveRandomQuantizedStretchPercent (int instanceSeed, int phraseCounter, float boundPercent)
+    {
+        const float bound = juce::jlimit (25.0f, 400.0f, boundPercent);
+        const float diff = bound > 100.0f ? (bound - 100.0f) : (100.0f - bound);
+        if (diff < 1e-6f)
+            return 100.0f;
+
+        const float lo = juce::jmin (100.0f, bound);
+        const float hi = juce::jmax (100.0f, bound);
+
+        std::vector<float> candidates;
+        for (float r : quantizedStretchRatios())
+            if (r >= lo - 1e-3f && r <= hi + 1e-3f)
+                candidates.push_back (r);
+        if (candidates.empty())
+            candidates.push_back (100.0f);
+
+        const juce::uint32 h = fnv1aHash (instanceSeed, phraseCounter, 7);   // salt 7
+        return candidates[h % static_cast<juce::uint32> (candidates.size())];
+    }
 }

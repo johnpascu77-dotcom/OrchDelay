@@ -518,6 +518,53 @@ int main()
               "resolveRandomStretchPercent: a bound of exactly 100% always resolves to 100% (no range)");
     }
 
+    // --- Quantized Stretch: a fixed notation-friendly ratio vocabulary ------
+    {
+        const auto& ratios = odly::quantizedStretchRatios();
+        check (ratios.size() >= 9, "quantizedStretchRatios: has a real vocabulary, not a token list");
+        bool has100 = false;
+        for (float r : ratios) if (std::abs (r - 100.0f) < 1e-6f) has100 = true;
+        check (has100, "quantizedStretchRatios: includes 100% (unchanged)");
+    }
+    {
+        check (std::abs (odly::snapToQuantizedStretch (100.0f) - 100.0f) < 1e-6f,
+              "snapToQuantizedStretch: an exact legal value snaps to itself");
+        check (std::abs (odly::snapToQuantizedStretch (105.0f) - 100.0f) < 1e-6f,
+              "snapToQuantizedStretch: 105% (close to 100) snaps to 100%");
+        check (std::abs (odly::snapToQuantizedStretch (30.0f) - (100.0f / 3.0f)) < 1e-3f,
+              "snapToQuantizedStretch: 30% snaps to the nearer of 25% and 33.3% (33.3%)");
+        check (std::abs (odly::snapToQuantizedStretch (180.0f) - 200.0f) < 1e-6f,
+              "snapToQuantizedStretch: 180% is closer to 200% than 150%, snaps to 200%");
+    }
+    {
+        const float a = odly::resolveRandomQuantizedStretchPercent (5, 3, 200.0f);
+        const float b = odly::resolveRandomQuantizedStretchPercent (5, 3, 200.0f);
+        check (std::abs (a - b) < 1e-6f, "resolveRandomQuantizedStretchPercent: identical inputs always produce identical outputs (determinism)");
+
+        bool aIsLegal = false;
+        for (float r : odly::quantizedStretchRatios()) if (std::abs (a - r) < 1e-3f) aIsLegal = true;
+        check (aIsLegal, "resolveRandomQuantizedStretchPercent: the result is always an EXACT legal ratio, never an in-between value");
+        check (a >= 100.0f - 1e-3f && a <= 200.0f + 1e-3f,
+              "resolveRandomQuantizedStretchPercent: stays within [100, bound] for a bound above 100");
+
+        const float c = odly::resolveRandomQuantizedStretchPercent (5, 3, 50.0f);
+        check (c >= 50.0f - 1e-3f && c <= 100.0f + 1e-3f,
+              "resolveRandomQuantizedStretchPercent: stays within [bound, 100] for a bound below 100");
+
+        check (std::abs (odly::resolveRandomQuantizedStretchPercent (5, 3, 100.0f) - 100.0f) < 1e-6f,
+              "resolveRandomQuantizedStretchPercent: a bound of exactly 100% always resolves to 100%");
+
+        int distinctValues = 0;
+        float seenA = -1.0f, seenB = -1.0f;
+        for (int i = 0; i < 100 && distinctValues < 2; ++i)
+        {
+            const float v = odly::resolveRandomQuantizedStretchPercent (5, i, 400.0f);
+            if (seenA < 0.0f) seenA = v;
+            else if (std::abs (v - seenA) > 1e-3f) { seenB = v; distinctValues = 2; }
+        }
+        check (distinctValues == 2, "resolveRandomQuantizedStretchPercent: draws more than one distinct legal ratio across a sample");
+    }
+
     std::cout << "-------------------------\n";
     if (failures == 0)
     {

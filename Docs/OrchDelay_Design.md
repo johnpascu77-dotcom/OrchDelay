@@ -459,6 +459,61 @@ New parameters: `stretchPercent` (Float, 25-400%, default 100%), `stretchRandom`
 a Stretch slider + Random toggle row; window height 720->780 to fit. 14 new test assertions (87 total,
 all passing): `applyStretch` (100%/50%/200% exact math, anchor-note-never-moves, relative-to-
 phraseStart not absolute-zero, out-of-range clamping), dispatch, 7-way proposal coverage, and
-`resolveRandomStretchPercent`'s asymmetric-bound behavior in both directions. Rebuilt + reinstalled,
-Build ~20:35 UTC. **Not yet live-tested** - required before calling this actually done, per this
-repo's own established discipline.
+`resolveRandomStretchPercent`'s asymmetric-bound behavior in both directions.
+
+**RESOLVED**: live-tested successfully - "Stretch works as expected." One real finding: in-between
+Stretch percentages (anything besides roughly 50/200/400%) produce musically interesting results
+that land "way off any binary or ternary grid," making them unusable once the echoed material needs
+to go through Dorico. User's own proposed fix, confirmed and scoped: a Free/Quantized toggle. Before
+building it, the user also shared a large (21K-line) archived ChatGPT transcript from an earlier,
+pre-Claude design pass on this same "smart delay" concept (working title "Parrot") for review - see
+`project_orchdelay_concept.md` in Claude's own memory for the full mined-idea report (several genuine
+feature ideas surfaced, deferred to a later round; the transcript also independently converged on the
+same "restrict to a legal ratio vocabulary, don't just snap a continuous value" design used below,
+which is why SS16 cites it as validation, not just a coincidence).
+
+## SS16. Quantized Stretch - restricting Stretch to a notation-friendly ratio vocabulary
+
+Root problem: `Stretch` rescales a phrase's timing by an arbitrary percentage (25-400%, continuous).
+Applied to already-clean, quantized source material, a percentage like 137% produces output timing
+that's mathematically exact but expressible on no ordinary notation grid - not a bug, but a real
+practical limit once the echoed phrase needs to reach Dorico through this ecosystem's downstream
+notation pipeline (the same concern [[project_orchquantizer_concept]] exists to solve for raw capture
+timing in general).
+
+**Fix**: a fixed vocabulary of "notation-friendly" ratios
+(`odly::quantizedStretchRatios()`) - simple integer relationships only, mirroring OrchQuantizer's own
+binary-family/ternary-family framing (N∈{1,2,3,4,6} subdivisions) but applied to a scaling factor
+instead of a beat subdivision:
+- Binary family (powers of 2, clean diminution/augmentation): 25%, 50%, 100%, 200%, 400%
+- Ternary/compound family (thirds, the dotted-note ratio): 33.3%(1:3), 66.7%(2:3), 150%(3:2), 300%(3:1)
+- Two bridge ratios (3:4 relationships): 75%, 133.3%
+
+A new `stretchQuantized` bool parameter, editor toggle "Quantize" next to the existing "Random" toggle
+in the Stretch row. Four behaviors, composed cleanly with the existing Random Stretch mechanism (same
+`resolveAndScheduleTransform` resolution chain, no special-casing elsewhere - Length/Rotation/
+Transpose's own Random modes are untouched):
+- Neither on: raw slider value, unchanged (today's existing behavior).
+- Quantized only: `odly::snapToQuantizedStretch()` snaps the fixed slider value to the nearest legal
+  ratio - aim anywhere, the value actually used always lands on a notatable ratio.
+- Random only: unchanged from SS15 (continuous draw within the slider's bound).
+- **Random AND Quantized together**: `odly::resolveRandomQuantizedStretchPercent()` draws UNIFORMLY
+  from the legal ratio vocabulary itself, restricted to whichever side of 100% the slider's bound
+  points toward - deliberately NOT a continuous draw followed by a snap, which would silently bias
+  the result toward whichever ratio sits nearest the middle of the range rather than giving every
+  legal ratio an equal chance. This was the one real design fork in the whole feature, and the
+  ChatGPT-transcript review (see above) independently converged on the same answer: when combining a
+  randomizing mechanism with a notation-legality constraint, narrow the CHOICE SET directly rather
+  than constraining the OUTPUT of an unconstrained draw.
+
+Under Follow Restlessness, both flags apply exactly the same way whether Stretch was reached by
+manual choice or by the restlessness-driven random transform pick - no separate interaction logic
+needed, since `resolvedStretchPercent` is computed unconditionally every phrase and simply goes
+unused if the phrase's resolved transform isn't Stretch.
+
+10 new test assertions (97 total, all passing): the ratio vocabulary's own sanity (includes 100%, real
+size), `snapToQuantizedStretch` exact-value/near-value/tie-breaking behavior, and
+`resolveRandomQuantizedStretchPercent`'s determinism, exact-legal-value guarantee, bound restriction
+in both directions, the 100%-bound no-range case, and multi-value spread across a sample. Rebuilt +
+reinstalled, Build ~16:07 UTC 2026-09-15. **Not yet live-tested** - required before calling this
+actually done, per this repo's own established discipline.
