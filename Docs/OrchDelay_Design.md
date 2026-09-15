@@ -685,5 +685,47 @@ in the status line, so the threshold can actually be tuned against real playing 
 note/empty phrase both score 0), and the comparisons that matter - a varied, spread-out phrase scores
 meaningfully higher than the identical note count repeated on one pitch, and a maximally rich phrase
 (enough notes, full variety, full spread) saturates at exactly 1.0. Rebuilt + reinstalled, Build
-~17:31 UTC 2026-09-15. **Not yet live-tested** - required before calling this actually done, per this
-repo's own established discipline.
+~17:31 UTC 2026-09-15.
+
+**RESOLVED**: live-tested successfully - the user reported a cascading 4-track network, each track's
+OrchDelay feeding the next (1→2→3→4→1), sustaining itself indefinitely from a single kick-start
+motive. Not a designed feature - a genuine emergent result of the responsorial architecture working
+across chained instances in a real rig. Moving on to item 4.
+
+### Multi-motive memory bank
+
+Before this item, OrchDelay only ever remembered the single most-recently-closed phrase - each echo
+was strictly a LOCAL response to whatever was just played, with no way to develop a recurring idea
+across a longer stretch of performance. `odly::MemoryEntry` captures just enough of a past phrase to
+echo it again later (its notes plus phraseStart/End, needed by Retrograde/Stretch's own timing math).
+The processor keeps a small pool (`phraseMemory`, fixed at `kMaxPhraseMemorySize=8`, oldest evicted
+first - not exposed as a parameter in this first version, deliberately: the user's own three
+candidate SELECTION strategies from the transcript review - most recent/most repeated/highest-energy
+- are a real design space worth its own follow-up rather than guessing at v1) of phrases actually
+PLAYED, never a callback substitution itself.
+
+A new `callbackProbability` parameter (0-100%, default 0% = feature fully disabled) is checked once
+per closure, inside `scheduleClosedPhrase` (right after the quality gate, before scheduling):
+`odly::resolveMemoryCallback` decides whether THIS closure should echo itself or reach back to an
+OLDER phrase, and if so, which pool index - uniform at random across the whole pool in this first
+version, no weighting toward "most recent" or similar (same explicit v1 scope cut as pool-selection-
+strategy above). Critically, **only the musical CONTENT can be swapped - THIS closure's own timing
+(`scheduledFirePpq`, already fixed by `closePhrase` before `scheduleClosedPhrase` ever runs) is never
+touched**: a callback answers at the SAME "N bars later" moment the current phrase would have, just
+with older material. The swap happens by overwriting `notes`/`phraseStartPpq`/`phraseEndPpq` on a
+COPY (`toSchedule`) before it reaches `resolveAndScheduleTransform` - the ORIGINAL `closed` phrase (its
+own real content) is what gets pushed into the memory pool afterward, never the substituted one, so
+a chain of callbacks can't gradually replace the pool with copies of copies. Because the swap happens
+before `resolveAndScheduleTransform` runs, both the transform CHOICE (Content-Aware Weighting reads
+`toSchedule.notes`) and the transform MATH correctly operate on whichever content actually ends up
+scheduled.
+
+New `totalMemoryCallbacksUi` (`callbacks N`) diagnostic in the status line. 8 new test assertions (142
+total, all passing): `resolveMemoryCallback`'s edge cases (empty pool never calls back regardless of
+probability; 0% probability never calls back regardless of pool size), determinism, index bounds, an
+observed ~50% callback rate at a 50% probability setting across a large sample, and index spread
+across the whole pool (not clustered). The actual callback substitution mechanics
+(copy-then-override-then-push-original) live in the processor and aren't independently unit-tested -
+a known gap matching the same category as the stop/rewind transition logic and Overlap Mode's own
+busy-gating. Rebuilt + reinstalled, Build ~18:13 UTC 2026-09-15. **Not yet live-tested** - required
+before calling this actually done, per this repo's own established discipline.

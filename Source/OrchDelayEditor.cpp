@@ -15,7 +15,7 @@ namespace
 OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
-    setSize (520, 968);
+    setSize (520, 1022);
 
     titleLabel.setText ("OrchDelay", juce::dontSendNotification);
     titleLabel.setJustificationType (juce::Justification::centred);
@@ -86,6 +86,10 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     setupLabel (minimumInterestLabel, "Minimum Interest");
     addAndMakeVisible (minimumInterestLabel);
     setupSlider (minimumInterestSlider);
+
+    setupLabel (callbackProbabilityLabel, "Callback Probability");
+    addAndMakeVisible (callbackProbabilityLabel);
+    setupSlider (callbackProbabilitySlider);
 
     setupLabel (restlessnessLabel, "Restlessness");
     addAndMakeVisible (restlessnessLabel);
@@ -174,6 +178,7 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     overlapModeAttachment = std::make_unique<ComboBoxAttachment> (state, "overlapMode", overlapModeBox);
     phraseGapAttachment = std::make_unique<SliderAttachment> (state, "phraseGapBeats", phraseGapSlider);
     minimumInterestAttachment = std::make_unique<SliderAttachment> (state, "minimumInterest", minimumInterestSlider);
+    callbackProbabilityAttachment = std::make_unique<SliderAttachment> (state, "callbackProbability", callbackProbabilitySlider);
     restlessnessAttachment = std::make_unique<SliderAttachment> (state, "restlessness", restlessnessSlider);
     contentAwareWeightingAttachment = std::make_unique<ButtonAttachment> (state, "contentAwareWeighting", contentAwareWeightingButton);
     transformAttachment = std::make_unique<ComboBoxAttachment> (state, "manualTransform", transformBox);
@@ -235,6 +240,10 @@ void OrchDelayAudioProcessorEditor::resized()
 
     minimumInterestLabel.setBounds (row (18));
     minimumInterestSlider.setBounds (row());
+    area.removeFromTop (8);
+
+    callbackProbabilityLabel.setBounds (row (18));
+    callbackProbabilitySlider.setBounds (row());
     area.removeFromTop (8);
 
     restlessnessLabel.setBounds (row (18));
@@ -326,6 +335,7 @@ void OrchDelayAudioProcessorEditor::timerCallback()
                          juce::String (audioProcessor.lastChosenTransformForUi()) + " stretch% " +
                          juce::String (audioProcessor.lastResolvedStretchPercentForUi(), 1) + "\nskipQ " +
                          juce::String (audioProcessor.skippedQualityForUi()) + " interest " +
-                         juce::String (audioProcessor.lastPhraseInterestForUi(), 1),
+                         juce::String (audioProcessor.lastPhraseInterestForUi(), 1) + " callbacks " +
+                         juce::String (audioProcessor.memoryCallbacksForUi()),
                          juce::dontSendNotification);
 }

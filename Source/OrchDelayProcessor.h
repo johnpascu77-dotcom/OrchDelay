@@ -64,6 +64,7 @@ public:
     int skippedBusyForUi() const { return totalPhrasesSkippedBusyUi.load(); }
     int skippedQualityForUi() const { return totalPhrasesSkippedQualityUi.load(); }
     float lastPhraseInterestForUi() const { return lastPhraseInterestUi.load(); }
+    int memoryCallbacksForUi() const { return totalMemoryCallbacksUi.load(); }
 
     // "Randomize" button target - writes through the normal parameter path
     // (undoable, saved in state), never a bare non-parameter side value.
@@ -92,6 +93,7 @@ private:
     std::atomic<float>* intervalRandomParameter = nullptr;
     std::atomic<float>* contentAwareWeightingParameter = nullptr;
     std::atomic<float>* minimumInterestParameter = nullptr;
+    std::atomic<float>* callbackProbabilityParameter = nullptr;
     std::atomic<float>* instanceSeedParameter = nullptr;
 
     double sampleRate = 44100.0;
@@ -115,6 +117,7 @@ private:
     std::atomic<int> totalPhrasesSkippedBusyUi { 0 };   // Overlap Mode "Skip" discards - due while busy
     std::atomic<int> totalPhrasesSkippedQualityUi { 0 };   // phrase-quality gate discards - see Docs SS20
     std::atomic<float> lastPhraseInterestUi { -1.0f };     // most recent phrase's own 0-100% interest score
+    std::atomic<int> totalMemoryCallbacksUi { 0 };   // times an OLDER phrase was echoed instead - Docs SS21
 
     juce::int64 nextNoteSeq = 1;      // 0 never issued, matches OrchPiano's own convention
     int nextPhraseId = 0;
@@ -123,6 +126,12 @@ private:
     odly::Phrase openPhrase;
     std::vector<odly::Phrase> pendingPhrases;
     std::vector<odly::ActiveFiredNote> activeFiredNotes;
+
+    // Most-recent-N phrases actually PLAYED (never a callback substitution
+    // itself - see Docs SS21), oldest evicted first once full. Fixed pool
+    // size, not exposed as a parameter in this first version.
+    static constexpr int kMaxPhraseMemorySize = 8;
+    std::vector<odly::MemoryEntry> phraseMemory;
 
     // Resolves the manual/proposed transform choice for a just-closed phrase
     // and builds its outputNotes (odly::buildOutputNotes) - each note's own

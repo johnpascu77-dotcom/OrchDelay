@@ -40,6 +40,9 @@ private:
     juce::Label minimumInterestLabel;
     juce::Slider minimumInterestSlider;
 
+    juce::Label callbackProbabilityLabel;
+    juce::Slider callbackProbabilitySlider;
+
     juce::Label restlessnessLabel;
     juce::Slider restlessnessSlider;
     juce::ToggleButton contentAwareWeightingButton;
@@ -84,6 +87,7 @@ private:
     std::unique_ptr<ComboBoxAttachment> overlapModeAttachment;
     std::unique_ptr<SliderAttachment> phraseGapAttachment;
     std::unique_ptr<SliderAttachment> minimumInterestAttachment;
+    std::unique_ptr<SliderAttachment> callbackProbabilityAttachment;
     std::unique_ptr<SliderAttachment> restlessnessAttachment;
     std::unique_ptr<ButtonAttachment> contentAwareWeightingAttachment;
     std::unique_ptr<ComboBoxAttachment> transformAttachment;

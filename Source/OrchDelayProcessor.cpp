@@ -35,6 +35,7 @@ OrchDelayAudioProcessor::OrchDelayAudioProcessor()
     intervalRandomParameter = parameters.getRawParameterValue ("intervalRandom");
     contentAwareWeightingParameter = parameters.getRawParameterValue ("contentAwareWeighting");
     minimumInterestParameter = parameters.getRawParameterValue ("minimumInterest");
+    callbackProbabilityParameter = parameters.getRawParameterValue ("callbackProbability");
     instanceSeedParameter = parameters.getRawParameterValue ("instanceSeed");
 }
 
@@ -46,6 +47,7 @@ void OrchDelayAudioProcessor::prepareToPlay (double newSampleRate, int samplesPe
     openPhrase = odly::Phrase {};
     pendingPhrases.clear();
     activeFiredNotes.clear();
+    phraseMemory.clear();
     nextNoteSeq = 1;
     nextPhraseId = 0;
     phraseCounter = 0;
@@ -67,6 +69,7 @@ void OrchDelayAudioProcessor::prepareToPlay (double newSampleRate, int samplesPe
     totalPhrasesSkippedBusyUi.store (0);
     totalPhrasesSkippedQualityUi.store (0);
     lastPhraseInterestUi.store (-1.0f);
+    totalMemoryCallbacksUi.store (0);
 }
 
 void OrchDelayAudioProcessor::releaseResources()
@@ -191,8 +194,41 @@ void OrchDelayAudioProcessor::scheduleClosedPhrase (odly::Phrase closed, int tra
         return;
     }
 
-    resolveAndScheduleTransform (closed, transposeSemitones);
-    pendingPhrases.push_back (closed);
+    // Multi-motive memory bank (see Docs SS21): occasionally echo an OLDER
+    // captured phrase instead of this one. THIS closure's own timing
+    // (scheduledFirePpq, already fixed by closePhrase before this function
+    // ever ran) is never touched - only the musical CONTENT can be swapped.
+    const int instanceSeed = instanceSeedParameter != nullptr
+        ? juce::jlimit (0, 127, juce::roundToInt (instanceSeedParameter->load())) : 0;
+    const float callbackProbabilityPercent = callbackProbabilityParameter != nullptr
+        ? juce::jlimit (0.0f, 100.0f, callbackProbabilityParameter->load()) : 0.0f;
+    const auto decision = odly::resolveMemoryCallback (instanceSeed, phraseCounter, callbackProbabilityPercent,
+                                                        static_cast<int> (phraseMemory.size()));
+
+    odly::Phrase toSchedule = closed;
+    if (decision.useCallback && decision.poolIndex >= 0
+        && decision.poolIndex < static_cast<int> (phraseMemory.size()))
+    {
+        const auto& memory = phraseMemory[static_cast<size_t> (decision.poolIndex)];
+        toSchedule.notes = memory.notes;
+        toSchedule.phraseStartPpq = memory.phraseStartPpq;
+        toSchedule.phraseEndPpq = memory.phraseEndPpq;
+        totalMemoryCallbacksUi.fetch_add (1);
+    }
+
+    // Remember what was ACTUALLY played (never a callback substitution
+    // itself) for future callbacks to reach back to - added AFTER the
+    // decision above, so a phrase can never call back to itself.
+    odly::MemoryEntry entry;
+    entry.notes = closed.notes;
+    entry.phraseStartPpq = closed.phraseStartPpq;
+    entry.phraseEndPpq = closed.phraseEndPpq;
+    phraseMemory.push_back (entry);
+    if (phraseMemory.size() > static_cast<size_t> (kMaxPhraseMemorySize))
+        phraseMemory.erase (phraseMemory.begin());
+
+    resolveAndScheduleTransform (toSchedule, transposeSemitones);
+    pendingPhrases.push_back (toSchedule);
 }
 
 void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
@@ -907,6 +943,28 @@ juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::cre
     params.push_back (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { "minimumInterest", 1 },
         "Minimum Interest",
+        juce::NormalisableRange<float> (0.0f, 100.0f, 1.0f),
+        0.0f,
+        juce::AudioParameterFloatAttributes()
+            .withLabel ("%")
+            .withStringFromValueFunction ([] (float value, int)
+            {
+                return juce::String (juce::roundToInt (value)) + "%";
+            })
+            .withValueFromStringFunction ([] (const juce::String& text)
+            {
+                return text.retainCharacters ("0123456789.").getFloatValue();
+            })));
+
+    // Multi-motive memory bank (see odly::resolveMemoryCallback / Docs
+    // SS21): the probability that a just-closed phrase echoes an OLDER
+    // captured phrase instead of itself - the echo's own timing (Hold Bars
+    // etc.) is never affected, only which musical material gets used.
+    // Default 0% = feature fully disabled (today's original "only ever
+    // remembers the most recent phrase" behavior).
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "callbackProbability", 1 },
+        "Callback Probability",
         juce::NormalisableRange<float> (0.0f, 100.0f, 1.0f),
         0.0f,
         juce::AudioParameterFloatAttributes()

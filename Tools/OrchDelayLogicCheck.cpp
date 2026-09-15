@@ -566,6 +566,36 @@ int main()
               "computePhraseInterest: enough notes, full variety, and a wide-enough spread scores the maximum 1.0");
     }
 
+    // --- resolveMemoryCallback: multi-motive memory bank ---------------------
+    {
+        check (! odly::resolveMemoryCallback (5, 3, 100.0f, 0).useCallback,
+              "resolveMemoryCallback: an empty pool never calls back, even at 100% probability");
+        check (! odly::resolveMemoryCallback (5, 3, 0.0f, 8).useCallback,
+              "resolveMemoryCallback: 0% probability never calls back, even with a full pool");
+
+        const auto a = odly::resolveMemoryCallback (5, 3, 100.0f, 8);
+        const auto b = odly::resolveMemoryCallback (5, 3, 100.0f, 8);
+        check (a.useCallback && b.useCallback && a.poolIndex == b.poolIndex,
+              "resolveMemoryCallback: identical inputs always produce identical outputs (determinism)");
+        check (a.poolIndex >= 0 && a.poolIndex < 8, "resolveMemoryCallback: poolIndex always lands within [0, poolSize)");
+
+        int callbackCount = 0;
+        const int trials = 4000;
+        for (int i = 0; i < trials; ++i)
+            if (odly::resolveMemoryCallback (11, i, 50.0f, 8).useCallback) ++callbackCount;
+        const double rate = static_cast<double> (callbackCount) / trials;
+        check (rate > 0.40 && rate < 0.60, "resolveMemoryCallback: 50% probability observes a roughly 50% callback rate across a sample");
+
+        bool sawLowIndex = false, sawHighIndex = false;
+        for (int i = 0; i < 4000; ++i)
+        {
+            const auto d = odly::resolveMemoryCallback (11, i, 100.0f, 8);
+            if (d.useCallback && d.poolIndex <= 2) sawLowIndex = true;
+            if (d.useCallback && d.poolIndex >= 5) sawHighIndex = true;
+        }
+        check (sawLowIndex && sawHighIndex, "resolveMemoryCallback: poolIndex spreads across the whole pool, not clustered at one end");
+    }
+
     // --- resolveRandomTransposeSemitones: deterministic, ranged, symmetric ---
     {
         const int a = odly::resolveRandomTransposeSemitones (5, 3, 12);

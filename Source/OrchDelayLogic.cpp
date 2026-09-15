@@ -457,6 +457,23 @@ namespace odly
         return (countFactor + varietyFactor + spreadFactor) / 3.0f;
     }
 
+    MemoryCallbackDecision resolveMemoryCallback (int instanceSeed, int phraseCounter,
+                                                  float callbackProbabilityPercent, int poolSize)
+    {
+        MemoryCallbackDecision decision;
+        if (poolSize <= 0)
+            return decision;
+
+        const float probability = juce::jlimit (0.0f, 1.0f, callbackProbabilityPercent / 100.0f);
+        decision.useCallback = hashUnit (instanceSeed, phraseCounter, 11) < probability;   // salt 11
+        if (! decision.useCallback)
+            return decision;
+
+        const juce::uint32 h = fnv1aHash (instanceSeed, phraseCounter, 12);   // salt 12
+        decision.poolIndex = static_cast<int> (h % static_cast<juce::uint32> (poolSize));
+        return decision;
+    }
+
     int resolveRandomTransposeSemitones (int instanceSeed, int phraseCounter, int rangeSemitones)
     {
         const int bound = juce::jlimit (0, 48, rangeSemitones < 0 ? -rangeSemitones : rangeSemitones);

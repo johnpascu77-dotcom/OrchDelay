@@ -381,6 +381,38 @@ namespace odly
     // OrchDelayProcessor's own scheduleClosedPhrase.
     float computePhraseInterest (const std::vector<HeldNote>& notes);
 
+    // --- Multi-motive memory bank (see Docs SS21) -----------------------------
+    // Just enough of a PAST phrase's own captured shape to echo it again
+    // later: its notes plus the phraseStart/End that transforms referencing
+    // the phrase's own timing (Retrograde, Stretch) need. The processor owns
+    // a small pool of these (most-recent-N actually played, not echoed -
+    // see OrchDelayProcessor's own phraseMemory).
+    struct MemoryEntry
+    {
+        std::vector<HeldNote> notes;
+        double phraseStartPpq = 0.0;
+        double phraseEndPpq = 0.0;
+    };
+
+    struct MemoryCallbackDecision
+    {
+        bool useCallback = false;
+        int poolIndex = -1;   // valid only when useCallback is true
+    };
+
+    // Resolves whether a just-closed phrase should be replaced by an OLDER
+    // one from the memory pool instead of echoing itself, and if so, which
+    // pool index (uniform among the whole pool - no "most recent"/"highest-
+    // energy" weighting in this first version, see Docs SS21's own scope
+    // note). `poolSize` is the memory pool's CURRENT size, not including the
+    // phrase currently being closed (the caller adds it to the pool only
+    // AFTER this decision, so a phrase can never call back to itself).
+    // Deterministic like every other seeded choice here - salt 11 for the
+    // gate, salt 12 for which index. Returns useCallback=false immediately
+    // if poolSize<=0 (nothing to reach back to yet).
+    MemoryCallbackDecision resolveMemoryCallback (int instanceSeed, int phraseCounter,
+                                                  float callbackProbabilityPercent, int poolSize);
+
     // Resolves the ACTUAL transpose amount to use when Random Transpose mode
     // is on: deterministic (same instanceSeed+phraseCounter -> same result,
     // reload-stable, same hash construction as proposeTransform but salt 3
