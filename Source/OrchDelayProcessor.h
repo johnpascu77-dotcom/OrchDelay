@@ -2,16 +2,20 @@
 
 #include <array>
 #include <atomic>
+#include <memory>
+#include <mutex>
 #include <vector>
 #include <JuceHeader.h>
 
 #include "OrchDelayLogic.h"
 
+class OrchDelayLink;
+
 class OrchDelayAudioProcessor final : public juce::AudioProcessor
 {
 public:
     OrchDelayAudioProcessor();
-    ~OrchDelayAudioProcessor() override = default;
+    ~OrchDelayAudioProcessor() override;
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
@@ -67,6 +71,44 @@ public:
     float lastPhraseInterestForUi() const { return lastPhraseInterestUi.load(); }
     int memoryCallbacksForUi() const { return totalMemoryCallbacksUi.load(); }
     int autonomousFiresForUi() const { return totalAutonomousFiresUi.load(); }
+    int remoteReceivedForUi() const { return totalRemoteReceivedUi.load(); }
+
+    // --- Cross-instance phrase broadcast (see OrchDelayLink / Docs SS27) ---
+    // `link` itself exposes Hub/Client mode + connected-state for the editor
+    // status line (audioProcessor.getLink().getModeForUi(), etc.) - these are
+    // just the processor-side pieces OrchDelayLink's own background thread
+    // needs to poll/feed, mirroring OrchCaptureLink's own established split.
+    OrchDelayLink& getLink() { return *link; }
+    bool isLinkHubParamOn() const { return linkHubParameter != nullptr && linkHubParameter->load() > 0.5f; }
+    int getBroadcastChannelForUi() const
+    {
+        return broadcastChannelParameter != nullptr
+            ? juce::jlimit (0, 8, juce::roundToInt (broadcastChannelParameter->load())) : 0;
+    }
+    int getListenChannelForUi() const
+    {
+        return listenChannelParameter != nullptr
+            ? juce::jlimit (0, 8, juce::roundToInt (listenChannelParameter->load())) : 0;
+    }
+    // Bumped once (audio thread) every time ANY phrase is newly captured,
+    // regardless of Broadcast Channel - OrchDelayLink's own worker thread
+    // polls this the same way OrchCaptureLink polls its own take-generation
+    // counter, to notice "there's a new phrase to publish" without needing
+    // the audio thread to push anything across threads itself.
+    int getCapturedGenerationForUi() const { return capturedGenerationUi.load(); }
+    // Thread-safe copy of the most recently captured phrase, for
+    // OrchDelayLink's worker thread to read (blocking lock is fine there -
+    // it is NOT the audio thread). Written non-blocking (try_lock) from the
+    // audio thread right after every capture - see scheduleClosedPhrase.
+    odly::MemoryEntry snapshotLastCapturedForBroadcast() const;
+    // Called from OrchDelayLink's own connection/worker thread (never the
+    // audio thread) whenever a phrase arrives from ANOTHER instance matching
+    // this instance's own Listen Channel. Queues it (blocking lock is fine
+    // here, same reasoning as above); processBlock() folds the queue into
+    // the Remote bank on the audio thread, reassigning fresh local `seq`
+    // values first (see Docs SS27 - never trust another instance's own seq
+    // numbering).
+    void pushIncomingRemotePhrase (const odly::MemoryEntry& entry);
 
     // "Randomize" button target - writes through the normal parameter path
     // (undoable, saved in state), never a bare non-parameter side value.
@@ -84,6 +126,15 @@ public:
     // raises a flag; processBlock() itself performs the actual clear, on
     // the audio thread, at the top of the next block.
     void requestClearCaptureBank();
+
+    // Same pattern as requestClearCaptureBank above, but always targets the
+    // Remote bank specifically (see Docs SS27) regardless of Capture Bank's
+    // own selection - Remote is populated exclusively by incoming broadcasts
+    // from OTHER instances, never by this instance's own local playing, so
+    // it needed its own independent clear trigger rather than overloading
+    // Capture Bank's selector with a 4th choice that could never actually be
+    // captured INTO.
+    void requestClearRemoteBank();
 
 private:
     juce::AudioProcessorValueTreeState parameters;
@@ -114,6 +165,9 @@ private:
     std::atomic<float>* captureBankParameter = nullptr;
     std::atomic<float>* activeBankParameter = nullptr;
     std::atomic<float>* recencyBiasParameter = nullptr;
+    std::atomic<float>* linkHubParameter = nullptr;
+    std::atomic<float>* broadcastChannelParameter = nullptr;
+    std::atomic<float>* listenChannelParameter = nullptr;
     std::atomic<float>* instanceSeedParameter = nullptr;
 
     double sampleRate = 44100.0;
@@ -139,6 +193,8 @@ private:
     std::atomic<float> lastPhraseInterestUi { -1.0f };     // most recent phrase's own 0-100% interest score
     std::atomic<int> totalMemoryCallbacksUi { 0 };   // times an OLDER phrase was echoed instead - Docs SS21
     std::atomic<int> totalAutonomousFiresUi { 0 };   // times the device fired on its own clock - Docs SS24
+    std::atomic<int> totalRemoteReceivedUi { 0 };    // phrases folded into the Remote bank - Docs SS27
+    std::atomic<int> capturedGenerationUi { 0 };     // bumped on every capture - OrchDelayLink polls this
 
     juce::int64 nextNoteSeq = 1;      // 0 never issued, matches OrchPiano's own convention
     int nextPhraseId = 0;
@@ -148,23 +204,53 @@ private:
     std::vector<odly::Phrase> pendingPhrases;
     std::vector<odly::ActiveFiredNote> activeFiredNotes;
 
-    // 3 independent memory banks (A/B/C - see Docs SS25), each holding the
-    // most-recent-N phrases actually PLAYED (never a callback substitution
-    // itself), oldest evicted first once full. `captureBank` selects which
-    // bank newly-closed phrases are added to; `activeBank` selects which
-    // bank Callback Probability and Autonomous Fire both draw FROM -
-    // deliberately independent selectors, not one shared knob, so a new
-    // bank can be filled with fresh material while a different one keeps
-    // playing, then switched over ("recalled") when ready - the
-    // development-section workflow this was built for.
+    // 4 independent memory banks - A/B/C (Docs SS25) plus Remote (Docs SS27,
+    // index kRemoteBankIndex), each holding the most-recent-N phrases, oldest
+    // evicted first once full. `captureBank` (3-choice, A/B/C only - Remote
+    // is never a valid capture target, see requestClearRemoteBank's own doc
+    // comment) selects which bank newly-closed LOCAL phrases are added to;
+    // `activeBank` (4-choice, A/B/C/Remote) selects which bank Callback
+    // Probability and Autonomous Fire both draw FROM - deliberately
+    // independent selectors, not one shared knob, so a new bank can be
+    // filled with fresh material while a different one keeps playing, then
+    // switched over ("recalled") when ready - the development-section
+    // workflow this was built for. Remote is populated exclusively by
+    // OrchDelayLink folding in phrases received from OTHER instances.
     static constexpr int kMaxPhraseMemorySize = 8;
-    static constexpr int kPhraseMemoryBankCount = 3;
+    static constexpr int kCaptureBankChoiceCount = 3;    // A, B, C - Capture Bank's own valid range
+    static constexpr int kPhraseMemoryBankCount = 4;     // A, B, C, Remote - Active Bank's own valid range
+    static constexpr int kRemoteBankIndex = kPhraseMemoryBankCount - 1;
     std::array<std::vector<odly::MemoryEntry>, kPhraseMemoryBankCount> phraseMemoryBanks;
 
     // Set by requestClearCaptureBank() (message thread), consumed at the
     // top of the next processBlock() (audio thread) - see that method's
     // own doc comment for why a direct clear from the UI would be unsafe.
     std::atomic<bool> clearCaptureBankRequested { false };
+    std::atomic<bool> clearRemoteBankRequested { false };   // requestClearRemoteBank's own flag - Docs SS27
+
+    // --- Cross-instance phrase broadcast plumbing (see OrchDelayLink / Docs
+    // SS27) - two independent small mutex-guarded handoffs, one per
+    // direction, both following the exact non-blocking-from-the-audio-thread
+    // discipline OrchMergeLink already established in this ecosystem
+    // (try_lock; skip and retry next time on contention, never block real-
+    // time processing for IPC's sake):
+    //
+    // OUTGOING: scheduleClosedPhrase copies the just-captured entry here
+    // (try_lock) every time ANY phrase closes; OrchDelayLink's own worker
+    // thread later reads it via snapshotLastCapturedForBroadcast() (a
+    // blocking lock, safe there - it is not the audio thread) once it
+    // notices capturedGenerationUi has moved.
+    mutable std::mutex lastCapturedMutex;
+    odly::MemoryEntry lastCapturedEntry;
+
+    // INCOMING: pushIncomingRemotePhrase() (called from OrchDelayLink's own
+    // connection thread, blocking lock fine there) appends here; the top of
+    // processBlock() drains it (try_lock) into phraseMemoryBanks[kRemoteBankIndex],
+    // reassigning fresh local `seq` values first.
+    std::mutex remoteInboxMutex;
+    std::vector<odly::MemoryEntry> remoteInboxPending;
+
+    std::unique_ptr<OrchDelayLink> link;
 
     // Tracks which live notes are currently passed straight through
     // (Overlay/Duck capture modes, see Docs SS22), by [channel][pitch]

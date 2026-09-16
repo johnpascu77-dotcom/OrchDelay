@@ -48,6 +48,7 @@ target_sources(OrchDelay
         Source/OrchDelayLogic.cpp
         Source/OrchDelayProcessor.cpp
         Source/OrchDelayEditor.cpp
+        Source/OrchDelayLink.cpp
 )
 
 add_dependencies(OrchDelay OrchDelayGenerateBuildInfo)

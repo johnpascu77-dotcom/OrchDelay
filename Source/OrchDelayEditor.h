@@ -18,6 +18,7 @@ public:
 
 private:
     void timerCallback() override;
+    juce::String getLinkStatusText() const;
 
     OrchDelayAudioProcessor& audioProcessor;
 
@@ -87,6 +88,16 @@ private:
     juce::Slider intervalSlider;
     juce::ToggleButton intervalRandomButton;
 
+    juce::Label linkHubLabel;
+    juce::ToggleButton linkHubButton;
+    juce::TextButton clearRemoteButton;
+
+    juce::Label broadcastChannelLabel;
+    juce::Slider broadcastChannelSlider;
+
+    juce::Label listenChannelLabel;
+    juce::Slider listenChannelSlider;
+
     juce::Label instanceSeedLabel;
     juce::Slider instanceSeedSlider;
     juce::TextButton randomizeSeedButton;
@@ -123,6 +134,9 @@ private:
     std::unique_ptr<ButtonAttachment> stretchQuantizedAttachment;
     std::unique_ptr<SliderAttachment> intervalAttachment;
     std::unique_ptr<ButtonAttachment> intervalRandomAttachment;
+    std::unique_ptr<ButtonAttachment> linkHubAttachment;
+    std::unique_ptr<SliderAttachment> broadcastChannelAttachment;
+    std::unique_ptr<SliderAttachment> listenChannelAttachment;
     std::unique_ptr<SliderAttachment> instanceSeedAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (OrchDelayAudioProcessorEditor)

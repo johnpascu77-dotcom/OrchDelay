@@ -1,5 +1,6 @@
 #include "OrchDelayEditor.h"
 #include "OrchDelayBuildInfo.h"
+#include "OrchDelayLink.h"
 
 namespace
 {
@@ -214,6 +215,32 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     intervalRandomButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
     addAndMakeVisible (intervalRandomButton);
 
+    // Cross-instance phrase broadcast (see OrchDelayLink / Docs SS27): lets
+    // one instance's captured phrases feed another instance's Remote bank
+    // directly, no MIDI cable needed. Exactly ONE instance in the rig should
+    // have "Broadcast Hub" on.
+    setupLabel (linkHubLabel, "Broadcast Hub");
+    addAndMakeVisible (linkHubLabel);
+    linkHubButton.setButtonText ("Hub");
+    linkHubButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
+    addAndMakeVisible (linkHubButton);
+
+    // "Clear Remote" - always targets the Remote bank regardless of Capture
+    // Bank's own selection (see requestClearRemoteBank's own doc comment).
+    clearRemoteButton.setButtonText ("Clear Remote");
+    clearRemoteButton.setColour (juce::TextButton::buttonColourId, kBoxBackground);
+    clearRemoteButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    clearRemoteButton.onClick = [this] { audioProcessor.requestClearRemoteBank(); };
+    addAndMakeVisible (clearRemoteButton);
+
+    setupLabel (broadcastChannelLabel, "Broadcast Channel");
+    addAndMakeVisible (broadcastChannelLabel);
+    setupSlider (broadcastChannelSlider);
+
+    setupLabel (listenChannelLabel, "Listen Channel");
+    addAndMakeVisible (listenChannelLabel);
+    setupSlider (listenChannelSlider);
+
     setupLabel (instanceSeedLabel, "Instance Seed");
     addAndMakeVisible (instanceSeedLabel);
     setupSlider (instanceSeedSlider);
@@ -256,6 +283,9 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     stretchQuantizedAttachment = std::make_unique<ButtonAttachment> (state, "stretchQuantized", stretchQuantizedButton);
     intervalAttachment = std::make_unique<SliderAttachment> (state, "intervalScalePercent", intervalSlider);
     intervalRandomAttachment = std::make_unique<ButtonAttachment> (state, "intervalRandom", intervalRandomButton);
+    linkHubAttachment = std::make_unique<ButtonAttachment> (state, "linkHub", linkHubButton);
+    broadcastChannelAttachment = std::make_unique<SliderAttachment> (state, "broadcastChannel", broadcastChannelSlider);
+    listenChannelAttachment = std::make_unique<SliderAttachment> (state, "listenChannel", listenChannelSlider);
     instanceSeedAttachment = std::make_unique<SliderAttachment> (state, "instanceSeed", instanceSeedSlider);
 
     startTimerHz (4);
@@ -286,7 +316,7 @@ void OrchDelayAudioProcessorEditor::resized()
     area.removeFromTop (12);
 
     // Status also spans the full width, pinned to the bottom.
-    auto statusArea = area.removeFromBottom (68);
+    auto statusArea = area.removeFromBottom (82);
     area.removeFromBottom (12);
     statusLabel.setBounds (statusArea);
 
@@ -403,6 +433,38 @@ void OrchDelayAudioProcessorEditor::resized()
     intervalRow.removeFromRight (8);
     intervalSlider.setBounds (intervalRow);
     rightArea.removeFromTop (8);
+
+    // --- Right column, continued: cross-instance broadcast (Docs SS27) ---
+    linkHubLabel.setBounds (rightRow (18));
+    auto linkHubRow = rightRow();
+    clearRemoteButton.setBounds (linkHubRow.removeFromRight (100));
+    linkHubRow.removeFromRight (8);
+    linkHubButton.setBounds (linkHubRow);
+    rightArea.removeFromTop (8);
+
+    broadcastChannelLabel.setBounds (rightRow (18));
+    broadcastChannelSlider.setBounds (rightRow());
+    rightArea.removeFromTop (8);
+
+    listenChannelLabel.setBounds (rightRow (18));
+    listenChannelSlider.setBounds (rightRow());
+    rightArea.removeFromTop (8);
+}
+
+juce::String OrchDelayAudioProcessorEditor::getLinkStatusText() const
+{
+    auto& link = audioProcessor.getLink();
+
+    switch (link.getModeForUi())
+    {
+        case OrchDelayLink::Mode::Hub:
+            return "hub";
+        case OrchDelayLink::Mode::HubPortBusy:
+            return "hub(busy)";
+        case OrchDelayLink::Mode::Client:
+        default:
+            return link.isConnectedForUi() ? "client(ok)" : "client(--)";
+    }
 }
 
 void OrchDelayAudioProcessorEditor::timerCallback()
@@ -438,6 +500,8 @@ void OrchDelayAudioProcessorEditor::timerCallback()
                          juce::String (audioProcessor.skippedQualityForUi()) + " interest " +
                          juce::String (audioProcessor.lastPhraseInterestForUi(), 1) + " callbacks " +
                          juce::String (audioProcessor.memoryCallbacksForUi()) + " autofire " +
-                         juce::String (audioProcessor.autonomousFiresForUi()),
+                         juce::String (audioProcessor.autonomousFiresForUi()) + "\n" +
+                         getLinkStatusText() + " remoteIn " +
+                         juce::String (audioProcessor.remoteReceivedForUi()),
                          juce::dontSendNotification);
 }

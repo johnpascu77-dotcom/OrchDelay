@@ -663,4 +663,52 @@ namespace odly
         const float unit = hashUnit (instanceSeed, phraseCounter, 9);   // salt 9
         return lo + unit * (hi - lo);
     }
+
+    juce::var memoryEntryToVar (const MemoryEntry& entry)
+    {
+        auto* obj = new juce::DynamicObject();
+        obj->setProperty ("start", entry.phraseStartPpq);
+        obj->setProperty ("end", entry.phraseEndPpq);
+
+        juce::Array<juce::var> notesArray;
+        for (const auto& n : entry.notes)
+        {
+            auto* noteObj = new juce::DynamicObject();
+            noteObj->setProperty ("ch", n.channel);
+            noteObj->setProperty ("p", n.pitch);
+            noteObj->setProperty ("v", n.velocity);
+            noteObj->setProperty ("on", n.onsetPpq);
+            noteObj->setProperty ("dur", n.durationPpq);
+            notesArray.add (juce::var (noteObj));
+        }
+        obj->setProperty ("notes", notesArray);
+
+        return juce::var (obj);
+    }
+
+    MemoryEntry memoryEntryFromVar (const juce::var& value)
+    {
+        MemoryEntry entry;
+        entry.phraseStartPpq = static_cast<double> (value.getProperty ("start", 0.0));
+        entry.phraseEndPpq = static_cast<double> (value.getProperty ("end", 0.0));
+
+        if (auto* notesArray = value.getProperty ("notes", juce::var()).getArray())
+        {
+            entry.notes.reserve (static_cast<size_t> (notesArray->size()));
+            for (const auto& noteVar : *notesArray)
+            {
+                HeldNote n;
+                n.channel = static_cast<int> (noteVar.getProperty ("ch", 1));
+                n.pitch = static_cast<int> (noteVar.getProperty ("p", 60));
+                n.velocity = static_cast<int> (noteVar.getProperty ("v", 100));
+                n.onsetPpq = static_cast<double> (noteVar.getProperty ("on", 0.0));
+                n.durationPpq = static_cast<double> (noteVar.getProperty ("dur", 0.0));
+                n.seq = -1;         // reassigned locally by the receiving instance - see this function's own doc comment
+                n.hasNoteOff = true;
+                entry.notes.push_back (n);
+            }
+        }
+
+        return entry;
+    }
 }

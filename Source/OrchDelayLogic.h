@@ -476,6 +476,19 @@ namespace odly
     int resolveRecencyWeightedPoolIndex (int instanceSeed, int counter, int salt, int poolSize,
                                          float recencyBias);
 
+    // --- Cross-instance phrase broadcast (see Docs SS27) -----------------------
+    // Serializes/deserializes just enough of a MemoryEntry to travel over
+    // OrchDelayLink's own JSON IPC messages between plugin instances: notes'
+    // pitch/velocity/channel/onset/duration plus the phrase's own start/end.
+    // Deliberately drops HeldNote::seq/phraseId/hasNoteOff on the way out -
+    // seq in particular must NEVER survive the trip, since it was assigned by
+    // a DIFFERENT instance's own independent counter and could collide with
+    // this instance's own currently-active notes; the receiving processor
+    // reassigns fresh seq values from its own counter before ever storing a
+    // received entry (see OrchDelayProcessor's own remote-inbox drain).
+    juce::var memoryEntryToVar (const MemoryEntry& entry);
+    MemoryEntry memoryEntryFromVar (const juce::var& value);
+
     // Resolves the ACTUAL transpose amount to use when Random Transpose mode
     // is on: deterministic (same instanceSeed+phraseCounter -> same result,
     // reload-stable, same hash construction as proposeTransform but salt 3

@@ -961,5 +961,116 @@ the newest entries, and salt-14-vs-15 independence; plus `resolveMemoryCallback`
 `resolveAutonomousFireIndex` each gained one new assertion confirming `recencyBias=1` visibly shifts
 their own draw far toward the newest pool entries (roughly 3x+ as many high-index as low-index draws
 across 4000 trials), on top of their existing bias=0 (untouched, still uniform) coverage. Rebuilt +
-reinstalled, Build ~2026-09-16. **Not yet live-tested** - required before calling this actually done,
-per this repo's own established discipline.
+reinstalled, Build ~2026-09-16. **RESOLVED** - live-tested by the user next session ("All confirmed
+working"), together with SS25 (Autonomous Fire + multi-bank/Clear Bank) - see SS25's own resolved
+note above.
+
+## SS27. Cross-instance phrase broadcast (Remote bank) - item 2 of the user's own priority list
+
+Directly continues the "shared clock/signal" thread opened alongside the multi-bank request (SS25):
+the user's own words there were "And also the shared clock/signal... I am also thinking of a way to
+make them communicate to each other." After SS25/SS26 shipped and were confirmed working, the user
+gave an explicit priority order for what remained - "First 1, then 2" (1 = recency-weighted pool
+selection, SS26; 2 = this item). I laid out three concrete interpretations of "shared clock/signal"
+before building anything (phase-aligning independent Autonomous Fire clocks; letting instances feed
+each other's memory pools directly without a MIDI cable; a designed canon/round firing relationship)
+and the user chose option 2 outright: direct cross-instance pool sharing.
+
+**Design grounded in real ecosystem precedent, not invented from scratch.** Before writing any code,
+I checked whether any existing Orch plugin already does in-process cross-instance C++ state sharing -
+none do. The closest precedent is OrchMerge's and OrchCapture's own loopback-TCP link objects
+(`OrchMergeLink`/`OrchCaptureLink`): one instance elects itself Hub/Coordinator via a manual parameter
+toggle, binds a fixed port with `juce::InterprocessConnectionServer`, and announces itself via a lock
+file in the temp directory; every other instance polls for that lock file and, once found, connects
+as a Client via `juce::InterprocessConnection`. All socket work happens on the link object's OWN
+background `juce::Thread`, never the audio thread or the host message thread - OrchCaptureLink's own
+devlog records that an earlier version driven by a `juce::Timer` (implicitly on the message thread)
+froze Bitwig outright with ~50-100 instances in the rig. `OrchDelayLink` (new files
+`Source/OrchDelayLink.h/.cpp`) follows this exact same shape, adapted for a genuinely different
+topology.
+
+**Where OrchDelay's needs differ from the precedent**: OrchCapture/OrchMerge are asymmetric
+(Coordinator aggregates; Clients only ever push, never receive anything back). OrchDelay needs a true
+symmetric pub/sub relay - ANY instance may both publish (Broadcast Channel > 0) and subscribe (Listen
+Channel > 0) at the same time, regardless of whether it happens to be the elected hub. The hub's own
+extra job beyond being a normal peer is a dumb fan-out relay: any phrase it receives from one client
+gets forwarded, unmodified, to every OTHER connected client - it never filters by channel itself, each
+client decides locally whether an incoming phrase's channel matches its own Listen Channel. The hub
+also applies an incoming phrase to its own Remote bank when ITS OWN Listen Channel matches (it's a
+peer, not exempted from listening) - but a hub's own LOCAL publish is never looped back into its own
+Remote bank (Remote is exclusively for material from OTHER instances; a hub echoing its own broadcast
+to itself would be redundant with its own A/B/C banks and just confusing). This topology also turns
+out to have no possible "hear my own echo" case by construction: a client's own publish only ever
+travels TO the hub, and the hub's relay explicitly excludes the sender's own connection from the
+fan-out - so no `src`/instance-uid tagging was needed at all to prevent self-hearing, simplifying the
+wire protocol.
+
+**New parameters**: `linkHub` (bool, default off - exactly ONE instance in the whole rig should have
+this on, same manual-designation convention as OrchCapture's Coordinator/OrchMerge's Hub, not
+automatic election), `broadcastChannel` (0-8, default 0=off - which channel this instance's own
+captured phrases publish to), `listenChannel` (0-8, default 0=off - which channel this instance
+receives OTHER instances' phrases from). All three default off, so an instance with this feature
+untouched behaves identically to before.
+
+**Why absolute host ppq needs no translation**: every OrchDelay instance in a Bitwig project already
+reads the SAME host transport (same bpm, same ppq, same time signature) - this was already true before
+this feature (it's how Autonomous Fire's own bar-boundary math stays correct per-instance). A phrase's
+`phraseStartPpq`/`phraseEndPpq`, captured on one instance and later scheduled/fired from a completely
+different instance's Remote bank, is therefore directly meaningful on arrival with zero adjustment -
+this is what actually makes direct pool-sharing tractable at all, rather than needing some translation
+or re-basing scheme.
+
+**Remote bank**: `phraseMemoryBanks` grew from 3 slots (A/B/C) to 4 (`kPhraseMemoryBankCount = 4`),
+index 3 (`kRemoteBankIndex`) reserved for phrases received over the link. Capture Bank's own valid
+range is now `kCaptureBankChoiceCount = 3` (A/B/C only - Remote is never a valid CAPTURE target, it's
+populated exclusively by incoming broadcasts) while Active Bank widened to all 4 choices
+("A"/"B"/"C"/"Remote"), so Callback Probability and Autonomous Fire can both be pointed at received
+material exactly like any local bank. Remote gained its own dedicated "Clear Remote" button
+(`requestClearRemoteBank`) rather than overloading Capture Bank's own selector with a 4th choice that
+could never actually be captured into.
+
+**Never trust another instance's own `seq` numbering**: `odly::memoryEntryToVar`/`memoryEntryFromVar`
+(new, tested via an actual JSON-string round-trip, not just a `juce::var`-tree round-trip) deliberately
+drop `HeldNote::seq`/`phraseId`/`hasNoteOff` on the wire - only pitch/velocity/channel/onset/duration
+plus the phrase's own start/end cross the link. `seq` in particular was assigned by a DIFFERENT
+instance's own independent monotonic counter and could numerically collide with THIS instance's own
+currently-active notes if reused verbatim - the exact bug shape (`(channel,pitch)`/id-alone matching
+collisions) OrchPiano's own devlog documents hitting three separate times. The receiving instance
+reassigns fresh local `seq` values from its own `nextNoteSeq` counter at the moment a received phrase
+is folded into the Remote bank (top of `processBlock`), never at any earlier point.
+
+**Thread-safety discipline - two independent small mutex-guarded handoffs, one per direction, both
+following OrchMergeLink's own established non-blocking-from-the-audio-thread rule (`try_lock`; skip
+and retry next block on contention, never block real-time processing for IPC's sake)**:
+- OUTGOING: `scheduleClosedPhrase` bumps `capturedGenerationUi` (unconditionally, cheap) and
+  `try_lock`-copies the just-captured entry into `lastCapturedEntry` every time ANY phrase closes.
+  `OrchDelayLink`'s own worker thread polls `getCapturedGenerationForUi()` once per `kPollMs` (300ms),
+  and on a change, reads the snapshot via `snapshotLastCapturedForBroadcast()` (a BLOCKING lock there -
+  safe, since that call only ever happens on the link's own thread, never the audio thread) and
+  publishes it if Broadcast Channel > 0.
+- INCOMING: `pushIncomingRemotePhrase` (called from the link's own connection thread, blocking lock
+  fine there too) appends to `remoteInboxPending`; the top of `processBlock` drains it via `try_lock`,
+  reassigning fresh `seq` values and folding each entry into the Remote bank (oldest evicted first,
+  same 8-entry cap as every other bank), incrementing new UI counter `totalRemoteReceivedUi`.
+
+**Editor**: new "Broadcast Hub" toggle + "Clear Remote" button (one row), "Broadcast Channel" and
+"Listen Channel" sliders, added to the RIGHT (transform) column after Interval Scale - the left
+(capture & timing) column was already the taller of the two (11 rows vs. the right's 7 before this
+change), so the new cluster went to the shorter column to keep the two columns closer in height rather
+than widening the gap further; no window-height change was needed, the right column's new 10-row total
+still fits within the same 1040x815 the left column's own 11 rows already required. Status line gained
+a link-mode summary (`hub`/`hub(busy)`/`client(ok)`/`client(--)`) plus a running `remoteIn` counter.
+
+7 new test assertions (169 total, all passing) cover `memoryEntryToVar`/`memoryEntryFromVar`'s own
+round-trip fidelity through an ACTUAL JSON string (not just a `juce::var` tree, which could hide a real
+wire-format bug) and confirm `seq` is deliberately NOT preserved. The IPC/threading machinery itself
+(`OrchDelayLink`, socket lifecycle, hub election, relay fan-out) is not unit-tested - same known-gap
+category as every other real-time/host-integration mechanism in this plugin (Autonomous Fire's own
+clock-arming logic, the transport-polling code, etc.) - it needs a real 2-instance Bitwig test.
+
+Rebuilt + reinstalled, Build ~2026-09-16. **Not yet live-tested** - required before calling this
+actually done, per this repo's own established discipline; this is also the first feature in the whole
+plugin that has never been exercised with two ACTUAL separate plugin instances talking to each other,
+so the live test matters more than usual here. Phase-aligning independent Autonomous Fire clocks
+(interpretation 1 from this section's own opening) and a designed canon/round firing relationship
+(interpretation 3) remain unbuilt, un-requested follow-ups if the user ever wants to revisit them.
