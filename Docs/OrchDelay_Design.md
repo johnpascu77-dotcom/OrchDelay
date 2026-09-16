@@ -1245,3 +1245,45 @@ user explicitly declined the "monophonic" fix (clip/shorten a phrase's own overl
 experimental (hence motive-killer)," so this stays as documented, known behavior rather than something to
 change: Wait prevents a NEW phrase from starting over an OLD one's still-sounding notes; it was never a
 promise that any one phrase's own material stays monophonic against itself.
+
+## SS30. Wait busy-gating was instant-by-instant, not phrase-envelope-aware - genuine cross-phrase overlap
+
+Follow-up to SS29, same session: the user asked, with a concrete example, how a deliberately simple
+monophonic clip (a single hand-built Bitwig MIDI clip, Content-Scaled 200% - i.e. simply doubled in
+length, nothing OrchDelay's own Stretch touches) could come out of a SOLO Hub instance with genuine
+polyphonic overlap "after a few iterations." Checked the math first: `applyStretch` scales a phrase's
+onset-spacing and each note's duration by the SAME factor relative to phrase start, so the overlap
+condition (`duration > gap`) is invariant under uniform scaling - stretch, Bitwig's or OrchDelay's own,
+mathematically cannot turn non-overlapping material into overlapping material. Confirmed against a real
+capture: the take starts genuinely clean (13 notes, zero overlap, including real rests between notes),
+then a SECOND independent note stream starts landing on top of the first partway through.
+
+**Root cause**: `checkAutonomousFire` creates and enqueues a new phrase strictly on its own fixed
+interval clock, with no awareness of what's currently playing - by design, it relies entirely on the
+shared Wait-gate downstream to hold it back if the device is busy (see that function's own doc comment).
+But "busy," before this fix, meant `!activeFiredNotes.empty()` - literally "is any note audibly sounding
+THIS INSTANT," not "is there a phrase still in progress." A genuinely monophonic phrase almost always has
+small rests between its own notes. During any such rest, `activeFiredNotes` reads empty even though the
+phrase hasn't actually finished - just paused - and a freshly-due Autonomous Fire phrase slips through
+the gate and starts in that gap. When the first phrase's own next note then comes due, it fires anyway
+(a started phrase is never re-gated against busy state, by design - see SS29's comment on this), landing
+on top of the second phrase. Two perfectly monophonic phrases individually, genuine polyphony as a pair -
+despite Wait being active the whole time.
+
+**Fix**: new member `busyUntilPpq` (`OrchDelayProcessor.h`) replaces `activeFiredNotes.empty()` as the
+Wait/Skip busy signal. The moment ANY phrase becomes due and starts (Overlap Mode phrases too, though
+they never check it themselves), the loop extends `busyUntilPpq` to the max `outputOffPpq` across that
+phrase's ENTIRE `outputNotes` - its own full envelope, first note to last, spanning its own internal
+rests - not just whichever note is currently sounding. The busy check became `busyUntilPpq >=
+blockEndPpq` (still busy through the whole block - stay queued) vs. releasing with `releasePpq =
+max(blockStartPpq, busyUntilPpq)` (same precise-anchor principle as SS29, just reading the more accurate
+signal now). `busyUntilPpq` is reset to `-1.0` at every point `activeFiredNotes` already gets cleared
+(`prepareToPlay`, `drainAndSilence`, `setStateInformation`) - same reset discipline, new variable.
+`activeFiredNotes` itself is unchanged in role - still the correct per-note note-off bookkeeping table,
+just no longer doubling as the gating signal. The note-off-emission loop, moved earlier in the block for
+SS29's sake, moved back to its original end-of-block position now that gating no longer depends on it -
+that reordering was a stepping stone superseded by this fix, not a needed permanent change.
+
+No new `odly::` pure function - purely processor-level state tracking, so no new test coverage (172
+existing assertions unaffected, confirmed passing). Rebuilt + reinstalled, Build ~2026-09-17. **Not yet
+live-tested.**

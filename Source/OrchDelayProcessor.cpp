@@ -63,6 +63,7 @@ void OrchDelayAudioProcessor::prepareToPlay (double newSampleRate, int samplesPe
     openPhrase = odly::Phrase {};
     pendingPhrases.clear();
     activeFiredNotes.clear();
+    busyUntilPpq = -1.0;
     for (auto& bank : phraseMemoryBanks)
         bank.clear();
     clearCaptureBankRequested.store (false);
@@ -122,6 +123,7 @@ void OrchDelayAudioProcessor::drainAndSilence (juce::MidiBuffer& output, int sam
     for (const auto& active : activeFiredNotes)
         output.addEvent (juce::MidiMessage::noteOff (active.channel, active.pitch), samplePosition);
     activeFiredNotes.clear();
+    busyUntilPpq = -1.0;
 
     // Same discipline for any live note currently passed straight through
     // (Overlay/Duck capture modes, see Docs SS22) - never leave one
@@ -722,42 +724,6 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
 
         furthestBlockPpqUi.store (blockEndPpq);
 
-        // --- emit note-offs for anything whose scheduled off has arrived --
-        // Moved to run BEFORE the phrase fire/release loop below (it used
-        // to run after, at the end of the block) - see Docs SS29. A
-        // Wait-queued phrase's busy check reads activeFiredNotes, and with
-        // the old ordering a note whose own off fell inside THIS block
-        // still looked "active" until the NEXT block's iteration, forcing
-        // release a full block later than the device actually freed up -
-        // and anchored to that later block's own coarse blockStartPpq on
-        // top of it. Running this first closes that gap: by the time the
-        // busy check runs, anything that finished within this same block
-        // has already been removed. justClearedPpq additionally records the
-        // precise ppq of whatever just cleared, so a release this block can
-        // anchor to that instead of blockStartPpq - see below.
-        // Same widened-condition reasoning as the fire loop below: a
-        // due-or-overdue note-off (noteOffPpq < blockEndPpq) still fires
-        // now, clamped into this block, rather than risking a stuck note if
-        // its exact target ppq had fallen through a gap between two blocks'
-        // own windows.
-        double justClearedPpq = -1.0;
-
-        for (auto it = activeFiredNotes.begin(); it != activeFiredNotes.end(); )
-        {
-            if (it->noteOffPpq < blockEndPpq)
-            {
-                const int offSample = juce::jlimit (0, juce::jmax (0, numSamples - 1),
-                                                    juce::roundToInt ((it->noteOffPpq - blockStartPpq) / ppqPerSample));
-                output.addEvent (juce::MidiMessage::noteOff (it->channel, it->pitch), offSample);
-                justClearedPpq = juce::jmax (justClearedPpq, it->noteOffPpq);
-                it = activeFiredNotes.erase (it);
-            }
-            else
-            {
-                ++it;
-            }
-        }
-
         // --- fire each note of each pending phrase INDEPENDENTLY ----------
         // Each note fires the first block its OWN outputOnsetPpq arrives -
         // never all of a phrase's notes bundled into whichever block first
@@ -772,17 +738,25 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         // worst a few ms late, rather than silently falling through a gap
         // between two blocks' own windows and never firing at all.
         // Overlap Mode (see Docs SS17): governs whether a phrase's own
-        // FIRST note is allowed to start while an earlier phrase's notes
-        // are still audibly sounding (`!activeFiredNotes.empty()`, checked
-        // fresh per-phrase below, never precomputed once - that's what
-        // makes "only the oldest queued answer releases per busy period"
-        // fall out naturally: the moment one phrase's first note fires, it
-        // adds to activeFiredNotes immediately, so the NEXT phrase checked
-        // in this same pass correctly sees the device as busy again). Once
-        // a phrase has started, its own remaining notes are NEVER re-gated
-        // against busy state - only inter-phrase collisions are managed,
-        // never a single answer's own internal texture (e.g. a Stretched
-        // phrase's own notes overlapping each other is left alone).
+        // FIRST note is allowed to start while an earlier phrase's own
+        // envelope (from ITS first note to ITS last, including its own
+        // internal rests - `busyUntilPpq`, see Docs SS30 and that member's
+        // own doc comment in the header) hasn't finished yet. Deliberately
+        // NOT "any note audibly sounding this instant" - an earlier version
+        // checked activeFiredNotes.empty() instead, which read as "free"
+        // during any rest inside an otherwise still-in-progress phrase,
+        // letting an unrelated Autonomous-Fire-drawn phrase start in the
+        // gap: genuine cross-phrase overlap despite Wait being active, from
+        // otherwise perfectly monophonic source material. Checked fresh
+        // per-phrase below, never precomputed once - that's what makes
+        // "only the oldest queued answer releases per busy period" fall out
+        // naturally: the moment one phrase is released, busyUntilPpq
+        // extends immediately, so the NEXT phrase checked in this same pass
+        // correctly sees the device as busy again. Once a phrase has
+        // started, its own remaining notes are NEVER re-gated against busy
+        // state - only inter-phrase collisions are managed, never a single
+        // answer's own internal texture (e.g. a Stretched phrase's own
+        // notes overlapping each other is left alone).
         const int overlapMode = overlapModeParameter != nullptr
             ? juce::jlimit (0, 2, juce::roundToInt (overlapModeParameter->load())) : 0;
 
@@ -794,10 +768,12 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
             const bool started = std::any_of (phrase.outputNotes.begin(), phrase.outputNotes.end(),
                                               [] (const odly::ScheduledNote& n) { return n.emitted; });
 
-            if (! started && overlapMode != odly::kOverlapOverlap && ! phrase.outputNotes.empty()
-                && phrase.outputNotes.front().outputOnsetPpq < blockEndPpq)
+            const bool dueThisBlock = ! started && ! phrase.outputNotes.empty()
+                && phrase.outputNotes.front().outputOnsetPpq < blockEndPpq;
+
+            if (dueThisBlock && overlapMode != odly::kOverlapOverlap)
             {
-                if (! activeFiredNotes.empty())
+                if (busyUntilPpq >= blockEndPpq)
                 {
                     if (overlapMode == odly::kOverlapSkip)
                     {
@@ -814,18 +790,30 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
                 // shift its whole remaining schedule to start right now,
                 // preserving its own internal rhythm rather than firing
                 // every already-overdue note in one clump the instant the
-                // coast clears. Anchor to the precise ppq the device just
-                // cleared (justClearedPpq, from the reordered note-off loop
-                // above) rather than blockStartPpq - see Docs SS29. Using
-                // blockStartPpq always rounded the release up to whichever
-                // block first noticed, adding up to a whole block of pure,
-                // one-directional lateness on every single Wait-release,
-                // which then compounded across a take (each late release
-                // also delays when the next queued phrase can release).
-                const double releasePpq = juce::jmax (blockStartPpq, justClearedPpq);
+                // coast clears. Anchor to the precise ppq the earlier
+                // phrase's own envelope actually ends (busyUntilPpq) rather
+                // than blockStartPpq - see Docs SS29: always rounding up to
+                // whichever block first noticed added up to a whole block
+                // of pure, one-directional lateness on every Wait-release,
+                // compounding across a take (each late release also delays
+                // when the next queued phrase can release).
+                const double releasePpq = juce::jmax (blockStartPpq, busyUntilPpq);
                 const double shift = releasePpq - phrase.outputNotes.front().outputOnsetPpq;
                 if (shift > 0.0)
                     odly::shiftOutputNotes (phrase, shift);
+            }
+
+            if (dueThisBlock)
+            {
+                // About to start this block (Overlap Mode phrases reach
+                // here too, ungated). Claim exclusivity for this phrase's
+                // own FULL envelope - first note to last, spanning its own
+                // internal rests - so a later Wait-gated phrase can't sneak
+                // into a gap between two of THIS phrase's own notes. Uses
+                // outputNotes as they stand right now (post-shift, if any
+                // was just applied above).
+                for (const auto& n : phrase.outputNotes)
+                    busyUntilPpq = juce::jmax (busyUntilPpq, n.outputOffPpq);
             }
 
             bool anyStillPending = false;
@@ -867,6 +855,30 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         pendingPhrases.erase (std::remove_if (pendingPhrases.begin(), pendingPhrases.end(),
                                               [] (const odly::Phrase& p) { return p.fired; }),
                               pendingPhrases.end());
+
+        // --- emit note-offs for anything whose scheduled off has arrived --
+        // Same widened-condition reasoning as the fire loop above: a
+        // due-or-overdue note-off (noteOffPpq < blockEndPpq) still fires
+        // now, clamped into this block, rather than risking a stuck note if
+        // its exact target ppq had fallen through a gap between two blocks'
+        // own windows. Purely per-note MIDI output bookkeeping now -
+        // Wait/Skip busy-gating reads busyUntilPpq instead (Docs SS30), not
+        // this table, so this loop's position within the block no longer
+        // matters for gating correctness.
+        for (auto it = activeFiredNotes.begin(); it != activeFiredNotes.end(); )
+        {
+            if (it->noteOffPpq < blockEndPpq)
+            {
+                const int offSample = juce::jlimit (0, juce::jmax (0, numSamples - 1),
+                                                    juce::roundToInt ((it->noteOffPpq - blockStartPpq) / ppqPerSample));
+                output.addEvent (juce::MidiMessage::noteOff (it->channel, it->pitch), offSample);
+                it = activeFiredNotes.erase (it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
     }
 
     midiMessages.swapWith (output);
@@ -959,6 +971,7 @@ void OrchDelayAudioProcessor::setStateInformation (const void* data, int sizeInB
     openPhrase = odly::Phrase {};
     pendingPhrases.clear();
     activeFiredNotes.clear();
+    busyUntilPpq = -1.0;
     wasPlaying = false;
     haveLastBlockEnd = false;
 }

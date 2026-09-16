@@ -204,6 +204,20 @@ private:
     std::vector<odly::Phrase> pendingPhrases;
     std::vector<odly::ActiveFiredNote> activeFiredNotes;
 
+    // Overlap Mode "Wait"/"Skip" busy-gating (see Docs SS17, SS29) - the ppq
+    // at which the LAST currently-started phrase's own LAST note finishes,
+    // spanning that phrase's own internal rests. Deliberately NOT the same
+    // thing as activeFiredNotes being non-empty (which only reflects notes
+    // audibly sounding THIS instant): a monophonic phrase with a rest
+    // between two of its own notes would read as "not busy" mid-rest under
+    // that check, letting an unrelated Autonomous-Fire-drawn phrase start
+    // in the gap - genuine cross-phrase overlap despite Wait being active,
+    // even though the first phrase hadn't actually finished. Extended
+    // (never shrunk) the moment ANY phrase is released/starts, to the max
+    // outputOffPpq across its own outputNotes; the busy check compares this
+    // against the current block instead of activeFiredNotes.empty().
+    double busyUntilPpq = -1.0;
+
     // 4 independent memory banks - A/B/C (Docs SS25) plus Remote (Docs SS27,
     // index kRemoteBankIndex), each holding the most-recent-N phrases, oldest
     // evicted first once full. `captureBank` (3-choice, A/B/C only - Remote
