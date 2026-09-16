@@ -16,7 +16,7 @@ namespace
 OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
-    setSize (1040, 890);
+    setSize (1040, 860);
 
     titleLabel.setText ("OrchDelay", juce::dontSendNotification);
     titleLabel.setJustificationType (juce::Justification::centred);
@@ -315,10 +315,15 @@ void OrchDelayAudioProcessorEditor::resized()
     bypassButton.setBounds (area.removeFromTop (28));
     area.removeFromTop (12);
 
-    // Status also spans the full width, pinned to the bottom.
-    auto statusArea = area.removeFromBottom (82);
-    area.removeFromBottom (12);
-    statusLabel.setBounds (statusArea);
+    // Status is placed AFTER the columns below (see the bottom of this
+    // function), spanning this same full width - captured here, before the
+    // column split, rather than pinned via removeFromBottom against the
+    // window's own DECLARED height. A host (Bitwig's own device panel, in
+    // particular) can silently render less vertical space than that
+    // declared height with no scrollbar, which left a bottom-pinned status
+    // label mostly cut off even though the actual column content ended
+    // well above the visible edge - see this bug's own Docs SS27 addendum.
+    const auto fullWidthArea = area;
 
     // Two columns for everything else - capture/timing on the left,
     // transform on the right. The single-column layout grew too tall
@@ -449,6 +454,14 @@ void OrchDelayAudioProcessorEditor::resized()
     listenChannelLabel.setBounds (rightRow (18));
     listenChannelSlider.setBounds (rightRow());
     rightArea.removeFromTop (8);
+
+    // Status goes directly below whichever column ended up taller (today,
+    // the left one) - never pinned to the window's own declared bottom edge,
+    // see this function's own comment above `fullWidthArea` for why.
+    const int contentBottom = juce::jmax (leftArea.getY(), rightArea.getY());
+    juce::Rectangle<int> statusArea (fullWidthArea.getX(), contentBottom + 8,
+                                     fullWidthArea.getWidth(), 82);
+    statusLabel.setBounds (statusArea);
 }
 
 juce::String OrchDelayAudioProcessorEditor::getLinkStatusText() const

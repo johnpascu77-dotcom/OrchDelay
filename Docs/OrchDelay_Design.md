@@ -1060,21 +1060,42 @@ change), so the new cluster went to the shorter column to keep the two columns c
 than widening the gap further. Status line gained a link-mode summary
 (`hub`/`hub(busy)`/`client(ok)`/`client(--)`) plus a running `remoteIn` counter.
 
-**Window-height clipping bug, found by the user's own live screenshot immediately after this section's
-first install**: I had claimed above that no window-height change was needed since the right column's
-new 10-row total still fit under the left column's own 11-row height - but that reasoning never
-actually verified the LEFT column itself still fit inside the window height carried over unchanged from
-SS26 (815, sized for the left column BEFORE this session added `remoteIn`'s own status-line row, which
-grew the status area 68→82px, eating into the same budget). Doing the real per-row arithmetic (header
-zone 132px + status zone 94px + top/bottom margins 32px + left column's 11 rows × 54px each = 852px
-minimum) showed 815 was already ~37px short - and the screenshot confirmed it exactly: Instance Seed's
-own label was the last thing visible, its slider and Randomize button pushed off the bottom edge
-entirely. Fixed by computing the real minimum from the actual row/zone arithmetic instead of an
-approximate bump (the pattern every earlier window-height increase this session had used) and adding a
-real safety margin on top: 1040x890. Lesson for next time this window needs to grow again: always do
-this exact per-row calculation rather than eyeballing an increment - the earlier approximate bumps had
-been carrying a small, growing, silently-tolerated shortfall for a while (a 2026-09-15 multi-bank
-addition already had one) that only became visibly severe once enough rows had accumulated.
+**Window-height clipping bug, found across two rounds of the user's own live screenshots immediately
+after this section's first install**:
+
+Round 1: I had claimed above that no window-height change was needed since the right column's new
+10-row total still fit under the left column's own 11-row height - but that reasoning never actually
+verified the LEFT column itself still fit inside the window height carried over unchanged from SS26
+(815, sized for the left column BEFORE this session added `remoteIn`'s own status-line row, which grew
+the status area 68→82px, eating into the same budget). The real per-row arithmetic (header zone 132px +
+status zone 94px + top/bottom margins 32px + left column's 11 rows × 54px each = 852px minimum) showed
+815 was already ~37px short - confirmed exactly: Instance Seed's own label was the last thing visible,
+its slider and Randomize button pushed off the bottom edge entirely. First fix attempt bumped the
+window to 1040x890 using the real per-row arithmetic instead of an approximate bump.
+
+Round 2: that fix made Instance Seed itself fully visible, but the user's NEXT screenshot showed the
+status label now mostly missing too - only its first ~2 lines visible, with a large visibly-empty gap
+of background between Instance Seed and the sliver of status text that did render, i.e. genuinely
+"there is enough space" as the user put it, not a real shortage this time. Root cause: `statusArea` was
+still computed via `area.removeFromBottom(82)` against the window's own DECLARED height (890) - correct
+arithmetic in isolation, but Bitwig's own device panel can render LESS vertical space than a plugin's
+declared editor size with no scrollbar and no error, silently cropping whatever falls below its own
+panel height. A status label pinned near y=890 landed mostly past whatever Bitwig actually chose to
+show, even though the real content (all the rows) ended well above that same visible edge.
+
+**Real fix**: stopped pinning status to the window's own bottom edge entirely. `fullWidthArea` is now
+captured before the two-column split (for status's own X/width later); after all rows in both columns
+are placed, `contentBottom = max(leftArea.getY(), rightArea.getY())` finds where the TALLER column's
+own cursor actually ended, and status is placed directly below THAT (`contentBottom + 8`), never
+against a number derived from the declared window height. This makes the layout self-correcting for
+future row additions or host-panel-height quirks: status always appears immediately after real content,
+regardless of how much (or little) of the declared window a given host actually renders. Window height
+simplified back down to 1040x860 (a modest margin over the still-useful ~848px real minimum, now purely
+a courtesy for hosts that DO render the full declared size, not a load-bearing number status placement
+depends on). Lesson for this window's own history: three straight rounds of clipping bugs (SS23's
+original single-column overflow, this section's two rounds) all trace back to the same root mistake -
+computing a layout number by hand instead of deriving it from where content actually ends, or (this
+round) anchoring a status label to a host-controlled declared size a host is free to under-render.
 
 7 new test assertions (169 total, all passing) cover `memoryEntryToVar`/`memoryEntryFromVar`'s own
 round-trip fidelity through an ACTUAL JSON string (not just a `juce::var` tree, which could hide a real
