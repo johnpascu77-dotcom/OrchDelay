@@ -56,6 +56,9 @@ private:
     juce::Label activeBankLabel;
     juce::ComboBox activeBankBox;
 
+    juce::Label recencyBiasLabel;
+    juce::Slider recencyBiasSlider;
+
     juce::Label restlessnessLabel;
     juce::Slider restlessnessSlider;
     juce::ToggleButton contentAwareWeightingButton;
@@ -105,6 +108,7 @@ private:
     std::unique_ptr<SliderAttachment> autonomousFireAttachment;
     std::unique_ptr<ComboBoxAttachment> captureBankAttachment;
     std::unique_ptr<ComboBoxAttachment> activeBankAttachment;
+    std::unique_ptr<SliderAttachment> recencyBiasAttachment;
     std::unique_ptr<SliderAttachment> restlessnessAttachment;
     std::unique_ptr<ButtonAttachment> contentAwareWeightingAttachment;
     std::unique_ptr<ComboBoxAttachment> transformAttachment;

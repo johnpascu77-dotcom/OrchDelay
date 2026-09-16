@@ -568,13 +568,13 @@ int main()
 
     // --- resolveMemoryCallback: multi-motive memory bank ---------------------
     {
-        check (! odly::resolveMemoryCallback (5, 3, 100.0f, 0).useCallback,
+        check (! odly::resolveMemoryCallback (5, 3, 100.0f, 0, 0.0f).useCallback,
               "resolveMemoryCallback: an empty pool never calls back, even at 100% probability");
-        check (! odly::resolveMemoryCallback (5, 3, 0.0f, 8).useCallback,
+        check (! odly::resolveMemoryCallback (5, 3, 0.0f, 8, 0.0f).useCallback,
               "resolveMemoryCallback: 0% probability never calls back, even with a full pool");
 
-        const auto a = odly::resolveMemoryCallback (5, 3, 100.0f, 8);
-        const auto b = odly::resolveMemoryCallback (5, 3, 100.0f, 8);
+        const auto a = odly::resolveMemoryCallback (5, 3, 100.0f, 8, 0.0f);
+        const auto b = odly::resolveMemoryCallback (5, 3, 100.0f, 8, 0.0f);
         check (a.useCallback && b.useCallback && a.poolIndex == b.poolIndex,
               "resolveMemoryCallback: identical inputs always produce identical outputs (determinism)");
         check (a.poolIndex >= 0 && a.poolIndex < 8, "resolveMemoryCallback: poolIndex always lands within [0, poolSize)");
@@ -582,18 +582,79 @@ int main()
         int callbackCount = 0;
         const int trials = 4000;
         for (int i = 0; i < trials; ++i)
-            if (odly::resolveMemoryCallback (11, i, 50.0f, 8).useCallback) ++callbackCount;
+            if (odly::resolveMemoryCallback (11, i, 50.0f, 8, 0.0f).useCallback) ++callbackCount;
         const double rate = static_cast<double> (callbackCount) / trials;
         check (rate > 0.40 && rate < 0.60, "resolveMemoryCallback: 50% probability observes a roughly 50% callback rate across a sample");
 
         bool sawLowIndex = false, sawHighIndex = false;
         for (int i = 0; i < 4000; ++i)
         {
-            const auto d = odly::resolveMemoryCallback (11, i, 100.0f, 8);
+            const auto d = odly::resolveMemoryCallback (11, i, 100.0f, 8, 0.0f);
             if (d.useCallback && d.poolIndex <= 2) sawLowIndex = true;
             if (d.useCallback && d.poolIndex >= 5) sawHighIndex = true;
         }
         check (sawLowIndex && sawHighIndex, "resolveMemoryCallback: poolIndex spreads across the whole pool, not clustered at one end");
+
+        // Recency Bias=1 (see Docs SS26): the callback pool draw should now
+        // clearly skew toward the HIGH (newest) end of an 8-entry pool,
+        // rather than the roughly-even spread confirmed above at bias=0.
+        int lowCount = 0, highCount = 0;
+        for (int i = 0; i < 4000; ++i)
+        {
+            const auto d = odly::resolveMemoryCallback (11, i, 100.0f, 8, 1.0f);
+            if (! d.useCallback) continue;
+            if (d.poolIndex <= 2) ++lowCount;
+            if (d.poolIndex >= 5) ++highCount;
+        }
+        check (highCount > lowCount * 3,
+              "resolveMemoryCallback: recencyBias=1 clearly favors the newest pool entries over the oldest");
+    }
+
+    // --- resolveRecencyWeightedPoolIndex: biased pool selection (Docs SS26) --
+    {
+        check (odly::resolveRecencyWeightedPoolIndex (5, 3, 14, 0, 0.5f) == -1,
+              "resolveRecencyWeightedPoolIndex: an empty pool always resolves to -1");
+        check (odly::resolveRecencyWeightedPoolIndex (5, 3, 14, 1, 0.5f) == 0,
+              "resolveRecencyWeightedPoolIndex: a pool of exactly 1 always resolves to index 0");
+
+        const int a = odly::resolveRecencyWeightedPoolIndex (5, 3, 14, 8, 0.5f);
+        const int b = odly::resolveRecencyWeightedPoolIndex (5, 3, 14, 8, 0.5f);
+        check (a == b, "resolveRecencyWeightedPoolIndex: identical inputs always produce identical outputs (determinism)");
+        check (a >= 0 && a < 8, "resolveRecencyWeightedPoolIndex: result always lands within [0, poolSize)");
+
+        // bias=0 should behave like a flat/uniform draw - both ends visited
+        // across a sample, roughly comparable counts at each end.
+        int lowAtZero = 0, highAtZero = 0;
+        for (int i = 0; i < 4000; ++i)
+        {
+            const int idx = odly::resolveRecencyWeightedPoolIndex (11, i, 14, 8, 0.0f);
+            if (idx <= 2) ++lowAtZero;
+            if (idx >= 5) ++highAtZero;
+        }
+        check (lowAtZero > 0 && highAtZero > 0 && std::abs (lowAtZero - highAtZero) < static_cast<int> (0.25 * 4000),
+              "resolveRecencyWeightedPoolIndex: bias=0 spreads roughly evenly, not skewed to either end");
+
+        // bias=1 should clearly skew toward the HIGH (newest) index.
+        int lowAtOne = 0, highAtOne = 0;
+        for (int i = 0; i < 4000; ++i)
+        {
+            const int idx = odly::resolveRecencyWeightedPoolIndex (11, i, 14, 8, 1.0f);
+            if (idx <= 2) ++lowAtOne;
+            if (idx >= 5) ++highAtOne;
+        }
+        check (highAtOne > lowAtOne * 3,
+              "resolveRecencyWeightedPoolIndex: bias=1 clearly favors the newest (highest-index) pool entries");
+
+        // A different salt (as memory-callback vs. autonomous-fire draws
+        // use) must diverge from this one at the same counter, same as every
+        // other seeded draw in this codebase.
+        const int viaSalt14 = odly::resolveRecencyWeightedPoolIndex (5, 100, 14, 8, 0.7f);
+        const int viaSalt15 = odly::resolveRecencyWeightedPoolIndex (5, 100, 15, 8, 0.7f);
+        bool sawDivergence = viaSalt14 != viaSalt15;
+        for (int i = 0; ! sawDivergence && i < 50; ++i)
+            sawDivergence = odly::resolveRecencyWeightedPoolIndex (5, i, 14, 8, 0.7f)
+                          != odly::resolveRecencyWeightedPoolIndex (5, i, 15, 8, 0.7f);
+        check (sawDivergence, "resolveRecencyWeightedPoolIndex: different salts (14 vs 15) give independent draws");
     }
 
     // --- isOutsideActiveRange: the Duck capture-mode decision ---------------
@@ -613,26 +674,39 @@ int main()
 
     // --- resolveAutonomousFireIndex: uniform pool pick, no probability gate ---
     {
-        check (odly::resolveAutonomousFireIndex (5, 3, 0) == -1,
+        check (odly::resolveAutonomousFireIndex (5, 3, 0, 0.0f) == -1,
               "resolveAutonomousFireIndex: an empty pool always resolves to -1");
 
-        const int a = odly::resolveAutonomousFireIndex (5, 3, 8);
-        const int b = odly::resolveAutonomousFireIndex (5, 3, 8);
+        const int a = odly::resolveAutonomousFireIndex (5, 3, 8, 0.0f);
+        const int b = odly::resolveAutonomousFireIndex (5, 3, 8, 0.0f);
         check (a == b, "resolveAutonomousFireIndex: identical inputs always produce identical outputs (determinism)");
         check (a >= 0 && a < 8, "resolveAutonomousFireIndex: poolIndex always lands within [0, poolSize)");
 
         bool sawLowIndex = false, sawHighIndex = false;
         for (int i = 0; i < 4000; ++i)
         {
-            const int idx = odly::resolveAutonomousFireIndex (11, i, 8);
+            const int idx = odly::resolveAutonomousFireIndex (11, i, 8, 0.0f);
             if (idx <= 2) sawLowIndex = true;
             if (idx >= 5) sawHighIndex = true;
         }
         check (sawLowIndex && sawHighIndex, "resolveAutonomousFireIndex: poolIndex spreads across the whole pool, not clustered at one end");
 
-        check (odly::resolveAutonomousFireIndex (5, 3, 8) != odly::resolveMemoryCallback (5, 3, 100.0f, 8).poolIndex
-              || odly::resolveAutonomousFireIndex (5, 4, 8) != odly::resolveMemoryCallback (5, 4, 100.0f, 8).poolIndex,
+        check (odly::resolveAutonomousFireIndex (5, 3, 8, 0.0f) != odly::resolveMemoryCallback (5, 3, 100.0f, 8, 0.0f).poolIndex
+              || odly::resolveAutonomousFireIndex (5, 4, 8, 0.0f) != odly::resolveMemoryCallback (5, 4, 100.0f, 8, 0.0f).poolIndex,
               "resolveAutonomousFireIndex: uses its own salt, independent of resolveMemoryCallback's own index draw");
+
+        // Recency Bias=1 (see Docs SS26): Autonomous Fire's own pool draw
+        // should clearly skew toward the HIGH (newest) end too, same as the
+        // memory-callback draw's own bias behavior confirmed above.
+        int lowCount = 0, highCount = 0;
+        for (int i = 0; i < 4000; ++i)
+        {
+            const int idx = odly::resolveAutonomousFireIndex (11, i, 8, 1.0f);
+            if (idx <= 2) ++lowCount;
+            if (idx >= 5) ++highCount;
+        }
+        check (highCount > lowCount * 3,
+              "resolveAutonomousFireIndex: recencyBias=1 clearly favors the newest pool entries over the oldest");
     }
 
     // --- resolveRandomTransposeSemitones: deterministic, ranged, symmetric ---

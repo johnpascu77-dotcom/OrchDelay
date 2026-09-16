@@ -1,6 +1,7 @@
 #include "OrchDelayLogic.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace odly
 {
@@ -473,7 +474,8 @@ namespace odly
     }
 
     MemoryCallbackDecision resolveMemoryCallback (int instanceSeed, int phraseCounter,
-                                                  float callbackProbabilityPercent, int poolSize)
+                                                  float callbackProbabilityPercent, int poolSize,
+                                                  float recencyBias)
     {
         MemoryCallbackDecision decision;
         if (poolSize <= 0)
@@ -484,18 +486,62 @@ namespace odly
         if (! decision.useCallback)
             return decision;
 
-        const juce::uint32 h = fnv1aHash (instanceSeed, phraseCounter, 12);   // salt 12
-        decision.poolIndex = static_cast<int> (h % static_cast<juce::uint32> (poolSize));
+        if (recencyBias > 0.0f)
+        {
+            decision.poolIndex = resolveRecencyWeightedPoolIndex (instanceSeed, phraseCounter, 14,
+                                                                   poolSize, recencyBias);
+        }
+        else
+        {
+            const juce::uint32 h = fnv1aHash (instanceSeed, phraseCounter, 12);   // salt 12
+            decision.poolIndex = static_cast<int> (h % static_cast<juce::uint32> (poolSize));
+        }
         return decision;
     }
 
-    int resolveAutonomousFireIndex (int instanceSeed, int autonomousFireCounter, int poolSize)
+    int resolveAutonomousFireIndex (int instanceSeed, int autonomousFireCounter, int poolSize,
+                                    float recencyBias)
     {
         if (poolSize <= 0)
             return -1;
 
+        if (recencyBias > 0.0f)
+            return resolveRecencyWeightedPoolIndex (instanceSeed, autonomousFireCounter, 15,
+                                                     poolSize, recencyBias);
+
         const juce::uint32 h = fnv1aHash (instanceSeed, autonomousFireCounter, 13);   // salt 13
         return static_cast<int> (h % static_cast<juce::uint32> (poolSize));
+    }
+
+    int resolveRecencyWeightedPoolIndex (int instanceSeed, int counter, int salt, int poolSize,
+                                         float recencyBias)
+    {
+        if (poolSize <= 0)
+            return -1;
+        if (poolSize == 1)
+            return 0;
+
+        const float bias = juce::jlimit (0.0f, 1.0f, recencyBias);
+        const float exponent = bias * 4.0f;   // 0 = flat/uniform, 4 = strongly favors the newest entries
+
+        std::vector<float> weights (static_cast<size_t> (poolSize));
+        float total = 0.0f;
+        for (int i = 0; i < poolSize; ++i)
+        {
+            const float w = std::pow (static_cast<float> (i + 1), exponent);
+            weights[static_cast<size_t> (i)] = w;
+            total += w;
+        }
+
+        const float target = hashUnit (instanceSeed, counter, salt) * total;
+        float cumulative = 0.0f;
+        for (int i = 0; i < poolSize; ++i)
+        {
+            cumulative += weights[static_cast<size_t> (i)];
+            if (target < cumulative)
+                return i;
+        }
+        return poolSize - 1;   // float-rounding safety net - never fall off the end unresolved
     }
 
     int resolveRandomTransposeSemitones (int instanceSeed, int phraseCounter, int rangeSemitones)

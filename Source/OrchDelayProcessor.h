@@ -113,6 +113,7 @@ private:
     std::atomic<float>* autonomousFireBarsParameter = nullptr;
     std::atomic<float>* captureBankParameter = nullptr;
     std::atomic<float>* activeBankParameter = nullptr;
+    std::atomic<float>* recencyBiasParameter = nullptr;
     std::atomic<float>* instanceSeedParameter = nullptr;
 
     double sampleRate = 44100.0;

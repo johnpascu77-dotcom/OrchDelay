@@ -40,6 +40,7 @@ OrchDelayAudioProcessor::OrchDelayAudioProcessor()
     autonomousFireBarsParameter = parameters.getRawParameterValue ("autonomousFireBars");
     captureBankParameter = parameters.getRawParameterValue ("captureBank");
     activeBankParameter = parameters.getRawParameterValue ("activeBank");
+    recencyBiasParameter = parameters.getRawParameterValue ("recencyBias");
     instanceSeedParameter = parameters.getRawParameterValue ("instanceSeed");
 }
 
@@ -237,8 +238,13 @@ void OrchDelayAudioProcessor::scheduleClosedPhrase (odly::Phrase closed, int tra
     auto& readBank = phraseMemoryBanks[static_cast<size_t> (activeBankIndex)];
     auto& writeBank = phraseMemoryBanks[static_cast<size_t> (captureBankIndex)];
 
+    // Recency Bias (see Docs SS26): 0 = today's flat uniform pick, unchanged;
+    // above 0 biases the pool draw toward more recently-captured entries.
+    const float recencyBias = recencyBiasParameter != nullptr
+        ? juce::jlimit (0.0f, 1.0f, recencyBiasParameter->load() / 100.0f) : 0.0f;
+
     const auto decision = odly::resolveMemoryCallback (instanceSeed, phraseCounter, callbackProbabilityPercent,
-                                                        static_cast<int> (readBank.size()));
+                                                        static_cast<int> (readBank.size()), recencyBias);
 
     odly::Phrase toSchedule = closed;
     if (decision.useCallback && decision.poolIndex >= 0
@@ -302,8 +308,10 @@ void OrchDelayAudioProcessor::checkAutonomousFire (double blockStartPpq, double 
 
     const int instanceSeed = instanceSeedParameter != nullptr
         ? juce::jlimit (0, 127, juce::roundToInt (instanceSeedParameter->load())) : 0;
+    const float recencyBias = recencyBiasParameter != nullptr
+        ? juce::jlimit (0.0f, 1.0f, recencyBiasParameter->load() / 100.0f) : 0.0f;
     const int poolIndex = odly::resolveAutonomousFireIndex (instanceSeed, autonomousFireCounter,
-                                                             static_cast<int> (activeBank.size()));
+                                                             static_cast<int> (activeBank.size()), recencyBias);
     ++autonomousFireCounter;
 
     // Re-arm for the next tick regardless of whether poolIndex somehow came
@@ -931,6 +939,27 @@ juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::cre
         "Active Bank",
         juce::StringArray { "A", "B", "C" },
         0));
+
+    // Recency Bias (see odly::resolveRecencyWeightedPoolIndex / Docs SS26):
+    // 0% (default) keeps Callback Probability and Autonomous Fire's pool
+    // draw exactly as flat/uniform as it always was; raising it biases both
+    // toward more recently-captured entries in Active Bank instead of
+    // any-age-equally, without touching which bank is in play.
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "recencyBias", 1 },
+        "Recency Bias",
+        juce::NormalisableRange<float> (0.0f, 100.0f, 1.0f),
+        0.0f,
+        juce::AudioParameterFloatAttributes()
+            .withLabel ("%")
+            .withStringFromValueFunction ([] (float value, int)
+            {
+                return juce::String (juce::roundToInt (value)) + "%";
+            })
+            .withValueFromStringFunction ([] (const juce::String& text)
+            {
+                return text.retainCharacters ("0123456789.").getFloatValue();
+            })));
 
     // The core "how far in the future" control - the whole point of the
     // device. 0 is a dedicated "pause capturing" state (see Docs SS17) -

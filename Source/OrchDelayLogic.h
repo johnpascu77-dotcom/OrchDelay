@@ -433,28 +433,48 @@ namespace odly
 
     // Resolves whether a just-closed phrase should be replaced by an OLDER
     // one from the memory pool instead of echoing itself, and if so, which
-    // pool index (uniform among the whole pool - no "most recent"/"highest-
-    // energy" weighting in this first version, see Docs SS21's own scope
-    // note). `poolSize` is the memory pool's CURRENT size, not including the
-    // phrase currently being closed (the caller adds it to the pool only
+    // pool index. `poolSize` is the memory pool's CURRENT size, not including
+    // the phrase currently being closed (the caller adds it to the pool only
     // AFTER this decision, so a phrase can never call back to itself).
-    // Deterministic like every other seeded choice here - salt 11 for the
-    // gate, salt 12 for which index. Returns useCallback=false immediately
-    // if poolSize<=0 (nothing to reach back to yet).
+    // `recencyBias` (0..1, see Docs SS26) - at 0 (the original v1 behavior,
+    // preserved byte-for-byte) the index is uniform across the whole pool via
+    // salt 12; above 0 it instead calls resolveRecencyWeightedPoolIndex
+    // (salt 14), biasing toward more recently-captured entries. Deterministic
+    // like every other seeded choice here - salt 11 for the gate. Returns
+    // useCallback=false immediately if poolSize<=0 (nothing to reach back to
+    // yet).
     MemoryCallbackDecision resolveMemoryCallback (int instanceSeed, int phraseCounter,
-                                                  float callbackProbabilityPercent, int poolSize);
+                                                  float callbackProbabilityPercent, int poolSize,
+                                                  float recencyBias);
 
     // --- Autonomous Fire (see Docs SS24) --------------------------------------
-    // Picks which pool index an AUTONOMOUS fire should use - uniform at
-    // random across the whole pool, same selection philosophy as
-    // resolveMemoryCallback's own poolIndex draw, but keyed by a separate
-    // `autonomousFireCounter` (there's no just-closed phrase to tie a
-    // phraseCounter value to - an autonomous fire isn't triggered by one).
-    // No probability gate needed here, unlike resolveMemoryCallback: the
-    // fire INTERVAL itself already controls frequency, this only decides
-    // WHICH pool entry each tick uses. Returns -1 if poolSize<=0 (nothing
-    // to fire). Salt 13, independent of every other seeded draw here.
-    int resolveAutonomousFireIndex (int instanceSeed, int autonomousFireCounter, int poolSize);
+    // Picks which pool index an AUTONOMOUS fire should use, keyed by a
+    // separate `autonomousFireCounter` (there's no just-closed phrase to tie
+    // a phraseCounter value to - an autonomous fire isn't triggered by one).
+    // `recencyBias` (0..1, see Docs SS26) works exactly as in
+    // resolveMemoryCallback above - 0 keeps the original uniform draw (salt
+    // 13), above 0 defers to resolveRecencyWeightedPoolIndex (salt 15). No
+    // probability gate needed here, unlike resolveMemoryCallback: the fire
+    // INTERVAL itself already controls frequency, this only decides WHICH
+    // pool entry each tick uses. Returns -1 if poolSize<=0 (nothing to fire).
+    int resolveAutonomousFireIndex (int instanceSeed, int autonomousFireCounter, int poolSize,
+                                    float recencyBias);
+
+    // --- Recency-weighted pool selection (see Docs SS26) ----------------------
+    // Shared by resolveMemoryCallback/resolveAutonomousFireIndex's own biased
+    // draw above `recencyBias`>0. Pool index 0 is assumed OLDEST, poolSize-1
+    // NEWEST (matching phraseMemoryBanks' own FIFO-evict-oldest ordering).
+    // Weight for index i is (i+1)^exponent, where exponent runs 0 (bias=0,
+    // every index equally weighted - flat/uniform) up to 4 (bias=1, strongly
+    // favors the newest few entries), then a single hashUnit draw (salt
+    // passed in by the caller, so the memory-callback and autonomous-fire
+    // draws stay independent of each other) walks the normalized cumulative
+    // weight sum to pick one index - same "target-then-walk-the-cumulative-
+    // sum" pattern proposeWeightedTransform's own salt-10 draw already uses.
+    // Returns -1 if poolSize<=0; poolSize==1 always returns 0 (nothing to
+    // weight between).
+    int resolveRecencyWeightedPoolIndex (int instanceSeed, int counter, int salt, int poolSize,
+                                         float recencyBias);
 
     // Resolves the ACTUAL transpose amount to use when Random Transpose mode
     // is on: deterministic (same instanceSeed+phraseCounter -> same result,

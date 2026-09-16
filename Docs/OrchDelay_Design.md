@@ -910,8 +910,56 @@ Instance Seed; window height 700→760 to fit (left column now 2 rows taller tha
 
 No new tests were strictly required at the pure-logic layer (no new `odly::` functions), so the
 existing 153-assertion suite is the full coverage here - confirmed still passing after this change.
-Rebuilt + reinstalled, Build ~2026-09-16. **Not yet live-tested** - required before calling this
-actually done, per this repo's own established discipline. Recency-weighted pool selection (instead
-of today's uniform-random pick, for both Callback Probability and Autonomous Fire) remains an open
-follow-up the user flagged separately ("I see also the Bias selection very handy. But we'll discuss
-more in detail after this first addition") - not addressed here.
+Rebuilt + reinstalled, Build ~2026-09-16. **RESOLVED** - user confirmed live: "All confirmed working."
+Pushed to `github.com/johnpascu77-dotcom/OrchDelay` (`df99c8f..8e7ef3c`) per explicit request even
+before testing ("push it anyway... I am confident that it will work as expected"), then verified the
+next session. Recency-weighted pool selection, flagged as a follow-up here, is addressed next in
+SS26.
+
+## SS26. Recency Bias - weighting the memory pool draw toward newer material
+
+User's own stated priority ordering for the two items left open after SS25 ("First 1, then 2"): this
+recency-weighting item first, the cross-instance shared-clock/signal item second (still deliberately
+deferred to its own conversation, not started here).
+
+Until now, both consumers of the memory pool - Callback Probability's occasional "echo something
+older instead" and Autonomous Fire's own free-running draw - picked uniformly at random across
+whichever bank Active Bank points to, with no notion of *how old* an entry was. **Recency Bias**
+(`recencyBias`, 0-100%, default 0%) lets either mechanism instead favor more RECENTLY captured
+material - useful once a bank has built up a few generations of phrases and newer material should
+dominate without discarding older entries outright (which Clear Bank already handles for the "start
+completely fresh" case).
+
+New shared helper `odly::resolveRecencyWeightedPoolIndex(instanceSeed, counter, salt, poolSize,
+recencyBias)`: pool index 0 is assumed OLDEST, `poolSize-1` NEWEST (matching `phraseMemoryBanks`' own
+FIFO-evict-oldest ordering - the oldest entry is always erased from the front). Weight for index `i`
+is `(i+1)^exponent`, where `exponent` runs from 0 at `recencyBias=0` (every index weighted equally -
+flat/uniform, i.e. the function degrades gracefully to the original behavior on its own terms) up to
+4 at `recencyBias=1` (strongly favors the newest few entries); a single `hashUnit` draw then walks the
+normalized cumulative weight sum to pick one index - the exact same "target-then-walk-the-cumulative-
+sum" pattern `proposeWeightedTransform`'s own salt-10 content-aware draw already uses (Docs SS19), not
+a new pattern invented for this feature.
+
+**Zero behavior change at the default (0%)**: rather than routing every draw through the new weighted
+function unconditionally, `resolveMemoryCallback` and `resolveAutonomousFireIndex` both keep their
+ORIGINAL mod-hash uniform-pick code path completely untouched for `recencyBias<=0`, and only call into
+`resolveRecencyWeightedPoolIndex` above that threshold. This matters because the weighted function's
+own draw sequence, even at bias=0, is not bit-for-bit identical to the original mod-hash sequence
+(same statistical uniformity, different formula) - existing sessions that never touch this new knob
+must see the literal, unchanged draw sequence they've always gotten, not just a statistically similar
+one. Two new salts: 14 for the memory-callback weighted draw, 15 for the autonomous-fire weighted
+draw - independent of each other and of every other seeded draw in this codebase, same convention as
+every prior salt addition.
+
+Editor gained a "Recency Bias" slider in the left (capture & timing) column, placed after Active Bank
+and before Instance Seed; window height 760→815 to fit (left column now 3 rows taller than the right).
+
+9 new test assertions (162 total, all passing): the shared helper's own edge cases (empty pool → -1,
+single-entry pool → 0), determinism, bounds, bias=0 spreads roughly evenly (regression guard against
+this function itself silently becoming skewed even before any caller uses it), bias=1 clearly favors
+the newest entries, and salt-14-vs-15 independence; plus `resolveMemoryCallback`/
+`resolveAutonomousFireIndex` each gained one new assertion confirming `recencyBias=1` visibly shifts
+their own draw far toward the newest pool entries (roughly 3x+ as many high-index as low-index draws
+across 4000 trials), on top of their existing bias=0 (untouched, still uniform) coverage. Rebuilt +
+reinstalled, Build ~2026-09-16. **Not yet live-tested** - required before calling this actually done,
+per this repo's own established discipline.

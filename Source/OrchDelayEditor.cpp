@@ -15,7 +15,7 @@ namespace
 OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
-    setSize (1040, 760);
+    setSize (1040, 815);
 
     titleLabel.setText ("OrchDelay", juce::dontSendNotification);
     titleLabel.setJustificationType (juce::Justification::centred);
@@ -142,6 +142,13 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     activeBankBox.setColour (juce::ComboBox::outlineColourId, kOutline);
     addAndMakeVisible (activeBankBox);
 
+    // Biases Callback Probability's and Autonomous Fire's pool draw toward
+    // more recently-captured entries within Active Bank - 0% (default) is
+    // today's original flat/uniform pick, unchanged (see Docs SS26).
+    setupLabel (recencyBiasLabel, "Recency Bias");
+    addAndMakeVisible (recencyBiasLabel);
+    setupSlider (recencyBiasSlider);
+
     setupLabel (restlessnessLabel, "Restlessness");
     addAndMakeVisible (restlessnessLabel);
     setupSlider (restlessnessSlider);
@@ -234,6 +241,7 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     autonomousFireAttachment = std::make_unique<SliderAttachment> (state, "autonomousFireBars", autonomousFireSlider);
     captureBankAttachment = std::make_unique<ComboBoxAttachment> (state, "captureBank", captureBankBox);
     activeBankAttachment = std::make_unique<ComboBoxAttachment> (state, "activeBank", activeBankBox);
+    recencyBiasAttachment = std::make_unique<SliderAttachment> (state, "recencyBias", recencyBiasSlider);
     restlessnessAttachment = std::make_unique<SliderAttachment> (state, "restlessness", restlessnessSlider);
     contentAwareWeightingAttachment = std::make_unique<ButtonAttachment> (state, "contentAwareWeighting", contentAwareWeightingButton);
     transformAttachment = std::make_unique<ComboBoxAttachment> (state, "manualTransform", transformBox);
@@ -334,6 +342,10 @@ void OrchDelayAudioProcessorEditor::resized()
 
     activeBankLabel.setBounds (leftRow (18));
     activeBankBox.setBounds (leftRow());
+    leftArea.removeFromTop (8);
+
+    recencyBiasLabel.setBounds (leftRow (18));
+    recencyBiasSlider.setBounds (leftRow());
     leftArea.removeFromTop (8);
 
     instanceSeedLabel.setBounds (leftRow (18));
