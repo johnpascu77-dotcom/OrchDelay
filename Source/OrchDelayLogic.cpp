@@ -513,6 +513,18 @@ namespace odly
         return static_cast<int> (h % static_cast<juce::uint32> (poolSize));
     }
 
+    double resolveNextAutonomousFirePpq (double previousDuePpq, double intervalPpq, double blockEndPpq)
+    {
+        double next = previousDuePpq + intervalPpq;
+        if (intervalPpq <= 0.0)
+            return next;   // defensive - the caller's own gate should prevent this
+
+        while (next <= blockEndPpq)
+            next += intervalPpq;
+
+        return next;
+    }
+
     int resolveRecencyWeightedPoolIndex (int instanceSeed, int counter, int salt, int poolSize,
                                          float recencyBias)
     {

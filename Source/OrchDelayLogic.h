@@ -460,6 +460,19 @@ namespace odly
     int resolveAutonomousFireIndex (int instanceSeed, int autonomousFireCounter, int poolSize,
                                     float recencyBias);
 
+    // Advances a phase-locked "every intervalPpq" schedule from its own
+    // PREVIOUS ideal due time, by whole multiples of intervalPpq, never
+    // rebasing from blockEndPpq directly (see Docs SS28 - that was the exact
+    // bug: re-arming from "whenever the triggering block happened to end"
+    // let a small overshoot compound every single cycle, so the cadence
+    // silently drifted later and later instead of staying locked to a clean
+    // N-bar grid). Also guards against falling behind after an unusually
+    // long block or a pause: advances by as many whole intervals as needed
+    // to land strictly after blockEndPpq, rather than firing a burst of
+    // catch-up ticks one per block. `intervalPpq` must be > 0 (the caller's
+    // own autonomousFireBars>0 gate already guarantees this).
+    double resolveNextAutonomousFirePpq (double previousDuePpq, double intervalPpq, double blockEndPpq);
+
     // --- Recency-weighted pool selection (see Docs SS26) ----------------------
     // Shared by resolveMemoryCallback/resolveAutonomousFireIndex's own biased
     // draw above `recencyBias`>0. Pool index 0 is assumed OLDEST, poolSize-1

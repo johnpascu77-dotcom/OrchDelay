@@ -709,6 +709,46 @@ int main()
               "resolveAutonomousFireIndex: recencyBias=1 clearly favors the newest pool entries over the oldest");
     }
 
+    // --- resolveNextAutonomousFirePpq: phase-locked re-arm, no drift (Docs SS28) ---
+    {
+        // Ordinary case: due at ppq 10, interval 4, a block that ends at
+        // 10.5 (barely overdue) - next should land EXACTLY at 14, not
+        // 10.5+4=14.5 (the old, buggy "rebase from blockEndPpq" behavior).
+        const double next1 = odly::resolveNextAutonomousFirePpq (10.0, 4.0, 10.5);
+        check (std::abs (next1 - 14.0) < 1e-9,
+              "resolveNextAutonomousFirePpq: advances by exactly one interval from the PREVIOUS due time, not from blockEndPpq");
+
+        // Across many cycles, each one only barely overdue (a small,
+        // varying overshoot each time - simulating real block-boundary
+        // slop), the schedule must stay EXACTLY on the 4.0-spaced grid
+        // forever, never drifting later cycle over cycle.
+        double duePpq = 10.0;
+        const double intervalPpq = 4.0;
+        bool everOffGrid = false;
+        for (int i = 1; i <= 200; ++i)
+        {
+            // A varying small overshoot (0 to just under one interval) -
+            // stands in for real block-granularity slop of differing sizes.
+            const double overshoot = 0.01 + 0.001 * static_cast<double> (i % 37);
+            const double blockEndPpq = duePpq + overshoot;
+            duePpq = odly::resolveNextAutonomousFirePpq (duePpq, intervalPpq, blockEndPpq);
+
+            const double expectedOnGrid = 10.0 + intervalPpq * static_cast<double> (i);
+            if (std::abs (duePpq - expectedOnGrid) > 1e-6)
+                everOffGrid = true;
+        }
+        check (! everOffGrid,
+              "resolveNextAutonomousFirePpq: stays perfectly grid-locked across 200 cycles of varying block-boundary slop - zero accumulated drift");
+
+        // Falling behind (e.g. after a long pause/stall): blockEndPpq is
+        // already more than a whole interval past the previous due time -
+        // must skip forward by whole intervals to land strictly after
+        // blockEndPpq, not just add one interval and still be overdue.
+        const double caughtUp = odly::resolveNextAutonomousFirePpq (10.0, 4.0, 25.0);
+        check (caughtUp > 25.0 && std::abs (std::fmod (caughtUp - 10.0, 4.0)) < 1e-9,
+              "resolveNextAutonomousFirePpq: after falling far behind, catches up to the first still-future grid point, not just +1 interval");
+    }
+
     // --- resolveRandomTransposeSemitones: deterministic, ranged, symmetric ---
     {
         const int a = odly::resolveRandomTransposeSemitones (5, 3, 12);

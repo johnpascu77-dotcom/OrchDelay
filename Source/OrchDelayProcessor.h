@@ -297,9 +297,10 @@ private:
     // memory pool has at least one entry, arms a self-sustaining "every N
     // bars" clock on first use, then fires a pool phrase each time it
     // ticks - entirely independent of whether anything new has arrived.
-    // See Docs SS24.
-    void checkAutonomousFire (double blockStartPpq, double blockEndPpq, double beatsPerBarNow,
-                              int transposeSemitones);
+    // See Docs SS24 (mechanics) and SS28 (the phase-locked re-arm fix - no
+    // blockStartPpq parameter needed here since SS28: the fire anchor is now
+    // the precise due ppq itself, never a block boundary).
+    void checkAutonomousFire (double blockEndPpq, double beatsPerBarNow, int transposeSemitones);
 
     // Silences anything currently sounding from a prior firing AND clears
     // the tracking table, in one operation - see Docs SS2's stuck-note-

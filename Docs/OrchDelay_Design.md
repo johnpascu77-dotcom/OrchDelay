@@ -1110,3 +1110,58 @@ plugin that has never been exercised with two ACTUAL separate plugin instances t
 so the live test matters more than usual here. Phase-aligning independent Autonomous Fire clocks
 (interpretation 1 from this section's own opening) and a designed canon/round firing relationship
 (interpretation 3) remain unbuilt, un-requested follow-ups if the user ever wants to revisit them.
+
+## SS28. Autonomous Fire drift/jitter - a real bug in the re-arm math and the fire anchor
+
+Reported live: "I begin to feel the need to correct the Autonomous Fire phase drift, because I get a
+'jitterish' effect soon after the start, that sounds more like a latency problem, notes landing
+sometimes too close to each other (not in a musical way - e.g. 3 against 2 - rather a 32nd or 64th
+apart)." This turned out to be a genuine bug in `checkAutonomousFire` itself (SS24), not a case for the
+"phase-aligning independent Autonomous Fire clocks" idea floated (but not built) in SS27 - this fix
+benefits a SINGLE instance's own cadence regardless of whether any other instance exists.
+
+**Two compounding root causes, both in the original SS24 code**:
+
+1. **Drift**: re-arming used `nextAutonomousFirePpq = blockEndPpq + intervalPpq` - rebased from
+   "whenever the triggering block happened to end," not from the PREVIOUS ideal due time. Since
+   `blockEndPpq` always overshoots the true due moment by up to one block's worth of ppq (block
+   granularity, typically a few milliseconds), and every cycle re-derives its own next due time from
+   that same overshot number, the error compounds every single cycle - explaining "soon after the
+   start": the first tick or two are close to correct, then it creeps progressively later relative to
+   a clean N-bar grid.
+2. **Jitter**: the actual fire was anchored to `autoPhrase.scheduledFirePpq = blockStartPpq` (the
+   triggering block's own start) rather than the precise due ppq (`nextAutonomousFirePpq` itself,
+   which was already known and >= the true due moment by definition of the "due" check). Since the
+   per-note fire loop's sample-offset math is `(note.outputOnsetPpq - blockStartPpq) / ppqPerSample`
+   clamped to `[0, numSamples-1]`, anchoring to `blockStartPpq` forces `outputOnsetPpq == blockStartPpq`
+   for the first note of every single autonomous fire, which maps to EXACTLY sample 0 of whatever block
+   noticed it was due - throwing away the sample-accurate precision every other note in this plugin
+   already gets, and landing at a coarse, block-quantized position that can fall unexpectedly close
+   (a 32nd/64th note, matching the user's own description) to some other already-scheduled note whose
+   own true position isn't quantized the same way.
+
+**Fix**: new pure function `odly::resolveNextAutonomousFirePpq(previousDuePpq, intervalPpq,
+blockEndPpq)` - advances from the PREVIOUS ideal due time by whole multiples of `intervalPpq`, walking
+forward past `blockEndPpq` (a `while` loop, not a single `+=`, so falling far behind after an unusually
+long block or a pause catches up to the first still-future grid point rather than firing a burst of
+catch-up ticks one per block). `checkAutonomousFire` now captures `const double firePpq =
+nextAutonomousFirePpq` (the precise due ppq) BEFORE re-arming, uses it as `autoPhrase.scheduledFirePpq`
+(not `blockStartPpq`), and re-arms via `nextAutonomousFirePpq =
+odly::resolveNextAutonomousFirePpq(firePpq, intervalPpq, blockEndPpq)` (not `blockEndPpq +
+intervalPpq`). Together: the cadence stays perfectly grid-locked forever (zero accumulated drift), and
+each fire lands at its own true sample-accurate position instead of a block-quantized one.
+`checkAutonomousFire`'s own `blockStartPpq` parameter became dead code after this fix and was removed
+from its signature (processor .h/.cpp and the one call site in `processBlock`).
+
+3 new test assertions (172 total, all passing): `resolveNextAutonomousFirePpq` advances by exactly one
+interval from the previous due time regardless of how much `blockEndPpq` overshot it (the literal
+regression test for root cause 1); stays perfectly grid-locked across 200 simulated cycles of varying
+block-boundary slop, asserting the EXACT expected ppq each cycle rather than just "close enough"; and
+catches up correctly (lands on the first still-future grid point, not merely one interval ahead) after
+falling more than a whole interval behind. The real-time clock-arming mechanics around it (whether
+`checkAutonomousFire` gets called at the right moments, `autonomousFireArmed`'s own state machine)
+remain in the processor and untested by the console app, same known-gap category as always - this fix
+targets exactly the pure-math piece that was actually wrong.
+
+Rebuilt + reinstalled, Build ~2026-09-16. **Not yet live-tested** - required before calling this
+actually done, per this repo's own established discipline.

@@ -302,7 +302,7 @@ void OrchDelayAudioProcessor::scheduleClosedPhrase (odly::Phrase closed, int tra
     pendingPhrases.push_back (toSchedule);
 }
 
-void OrchDelayAudioProcessor::checkAutonomousFire (double blockStartPpq, double blockEndPpq,
+void OrchDelayAudioProcessor::checkAutonomousFire (double blockEndPpq,
                                                    double beatsPerBarNow, int transposeSemitones)
 {
     const int autonomousFireBars = autonomousFireBarsParameter != nullptr
@@ -336,6 +336,14 @@ void OrchDelayAudioProcessor::checkAutonomousFire (double blockStartPpq, double 
     if (blockEndPpq < nextAutonomousFirePpq)
         return;   // not due yet
 
+    // The precise, grid-locked ppq this tick was actually due at - captured
+    // BEFORE re-arming below. See Docs SS28: using this (not blockStartPpq)
+    // as the fire anchor is what gives Autonomous Fire the same sample-
+    // accurate precision every other note in this plugin already has,
+    // instead of always landing at exactly sample 0 of whatever block
+    // happened to notice it was due.
+    const double firePpq = nextAutonomousFirePpq;
+
     const int instanceSeed = instanceSeedParameter != nullptr
         ? juce::jlimit (0, 127, juce::roundToInt (instanceSeedParameter->load())) : 0;
     const float recencyBias = recencyBiasParameter != nullptr
@@ -344,10 +352,14 @@ void OrchDelayAudioProcessor::checkAutonomousFire (double blockStartPpq, double 
                                                              static_cast<int> (activeBank.size()), recencyBias);
     ++autonomousFireCounter;
 
-    // Re-arm for the next tick regardless of whether poolIndex somehow came
+    // Re-arm from THIS cycle's own ideal due time, never from blockEndPpq -
+    // keeps the cadence perfectly grid-locked instead of silently drifting
+    // later every cycle by however much this block happened to overshoot
+    // (see Docs SS28 - odly::resolveNextAutonomousFirePpq's own doc comment
+    // has the full story). Done regardless of whether poolIndex somehow came
     // back invalid (shouldn't happen given the empty-pool guard above, but
     // never leave the clock silently stalled).
-    nextAutonomousFirePpq = blockEndPpq + intervalPpq;
+    nextAutonomousFirePpq = odly::resolveNextAutonomousFirePpq (firePpq, intervalPpq, blockEndPpq);
 
     if (poolIndex < 0 || poolIndex >= static_cast<int> (activeBank.size()))
         return;
@@ -358,9 +370,9 @@ void OrchDelayAudioProcessor::checkAutonomousFire (double blockStartPpq, double 
     autoPhrase.phraseStartPpq = memory.phraseStartPpq;
     autoPhrase.phraseEndPpq = memory.phraseEndPpq;
     autoPhrase.closed = true;
-    // This tick IS the fire moment - not "N bars from here," Autonomous
-    // Fire's own interval already governs the cadence.
-    autoPhrase.scheduledFirePpq = blockStartPpq;
+    // The precise due moment, not "whichever block noticed" - see this
+    // function's own doc comment above `firePpq`.
+    autoPhrase.scheduledFirePpq = firePpq;
 
     ++phraseCounter;   // shared with real closures - see resolveAndScheduleTransform's own use of it
     totalAutonomousFiresUi.fetch_add (1);
@@ -706,7 +718,7 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         // baseHoldBars>0 gate above: it fires from the EXISTING memory
         // pool, not from newly-captured material, so it stays independent
         // of whether the device is currently "listening" for new phrases.
-        checkAutonomousFire (blockStartPpq, blockEndPpq, beatsPerBarNow, transposeSemitones);
+        checkAutonomousFire (blockEndPpq, beatsPerBarNow, transposeSemitones);
 
         furthestBlockPpqUi.store (blockEndPpq);
 
