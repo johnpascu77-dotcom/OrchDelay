@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OrchDelay — Reference</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=Work+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --bg:#15120F; --surface:#1E1A15; --surface-2:#262019; --surface-3:#2E2620;
+    --border:#3A2F22; --border-soft:#2A2319;
+    --text:#EDE6D9; --text-dim:#A79B87; --text-faint:#6E6353;
+    --brass:#D8A94E; --brass-dim:#A67E38;
+    --note:#CB6E47; --note-dim:#8C4C31;
+    --control:#5C93B8; --control-dim:#3E6A85;
+    --sage:#84A672; --sage-dim:#5C7A4E;
+    --violet:#9488B0; --violet-dim:#665C7C;
+    color-scheme: dark;
+  }
+  *{ box-sizing:border-box; }
+  body{
+    background:var(--bg); color:var(--text); margin:0;
+    font-family:"Work Sans", ui-sans-serif, system-ui, sans-serif;
+    line-height:1.55; font-size:15px;
+    background-image: radial-gradient(1100px 480px at 10% -10%, color-mix(in srgb, var(--violet) 9%, transparent), transparent 60%);
+  }
+  .wrap{ max-width:1160px; margin:0 auto; padding:36px 26px 70px; }
+  .mono{ font-family:"IBM Plex Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+  .crumbs{ font-family:"IBM Plex Mono"; font-size:.7rem; color:var(--text-faint); letter-spacing:.04em; margin-bottom:16px; }
+  .crumbs b{ color:var(--violet); font-weight:500; }
+  .nameplate{ display:flex; align-items:flex-end; justify-content:space-between; gap:20px; flex-wrap:wrap;
+    padding-bottom:18px; margin-bottom:22px; border-bottom:2px solid var(--border); }
+  .nameplate h1{ font-family:"Big Shoulders Display"; font-weight:800; text-transform:uppercase;
+    font-size:clamp(2.1rem,5vw,3.2rem); line-height:.9; margin:0; letter-spacing:.005em; }
+  .nameplate .role{ color:var(--text-dim); font-size:.92rem; max-width:56ch; margin-top:8px; }
+  .badges{ display:flex; gap:8px; flex-wrap:wrap; }
+  .badge{ font-family:"IBM Plex Mono"; font-size:.66rem; text-transform:uppercase; letter-spacing:.06em;
+    padding:3px 9px; border-radius:20px; white-space:nowrap; }
+  .badge.chain{ color:var(--violet); border:1px solid var(--violet-dim); background:color-mix(in srgb, var(--violet) 14%, transparent); }
+  .badge.live{ color:var(--sage); border:1px solid var(--sage-dim); background:color-mix(in srgb, var(--sage) 14%, transparent); }
+  .badge.plugin-code{ color:var(--text-faint); border:1px dashed var(--text-faint); }
+  .lede{ color:var(--text-dim); max-width:80ch; margin:0 0 34px; font-size:.98rem; }
+  .lede strong{ color:var(--text); font-weight:600; }
+  .tabnote{ display:flex; gap:12px; background:var(--surface); border:1px solid var(--border-soft);
+    border-radius:8px; padding:14px 16px; margin:0 0 34px; }
+  .tabnote .dot{ flex:none; width:9px; height:9px; border-radius:50%; background:var(--violet); margin-top:6px; }
+  .tabnote p{ margin:0; color:var(--text-dim); font-size:.87rem; }
+  .tabnote code{ color:var(--brass); font-family:"IBM Plex Mono"; }
+  .section-head{ display:flex; align-items:baseline; gap:14px; margin:52px 0 18px; }
+  .section-head .num{ font-family:"IBM Plex Mono"; color:var(--text-faint); font-size:.82rem; }
+  .section-head h2{ font-family:"Big Shoulders Display"; font-weight:700; text-transform:uppercase; font-size:1.5rem; margin:0; }
+  .section-head .rule{ flex:1; height:1px; background:var(--border); }
+  .section-note{ color:var(--text-dim); max-width:80ch; margin:-6px 0 22px; font-size:.9rem; }
+  .layout{ display:grid; grid-template-columns: 480px 1fr; gap:28px; align-items:start; }
+  @media (max-width:940px){ .layout{ grid-template-columns:1fr; } }
+  .shot-frame{ position:relative; border:1px solid var(--border-soft); border-radius:8px; overflow:hidden;
+    background:#0C0A08; box-shadow: 0 14px 34px -16px rgba(0,0,0,.7); }
+  .shot-frame img{ display:block; width:100%; height:auto; }
+  .marker{ position:absolute; transform:translate(-50%,-50%); width:24px; height:24px; border-radius:50%;
+    background:var(--violet); color:#150F1C; border:2px solid #150F1C; font-family:"IBM Plex Mono"; font-weight:600;
+    font-size:.74rem; display:flex; align-items:center; justify-content:center;
+    box-shadow:0 0 0 3px color-mix(in srgb, var(--violet) 45%, transparent), 0 3px 10px rgba(0,0,0,.5); }
+  .shot-caption{ color:var(--text-faint); font-size:.76rem; margin-top:10px; }
+  .region-list{ display:flex; flex-direction:column; }
+  .region{ display:flex; gap:12px; padding:13px 0; border-bottom:1px solid var(--border-soft); }
+  .region:last-child{ border-bottom:none; }
+  .region .badge-num{ flex:none; width:24px; height:24px; border-radius:50%; background:var(--surface-2);
+    border:1px solid var(--violet-dim); color:var(--violet); font-family:"IBM Plex Mono"; font-weight:600;
+    font-size:.74rem; display:flex; align-items:center; justify-content:center; margin-top:2px; }
+  .region .r-name{ font-weight:600; font-size:.89rem; }
+  .region .r-members{ font-family:"IBM Plex Mono"; font-size:.65rem; color:var(--text-faint); margin-top:3px; }
+  .region .r-desc{ color:var(--text-dim); font-size:.81rem; margin-top:5px; line-height:1.5; }
+  .table-wrap{ overflow-x:auto; background:var(--surface); border:1px solid var(--border-soft); border-radius:8px; margin-bottom:14px; }
+  table{ width:100%; border-collapse:collapse; font-size:.8rem; }
+  th{ text-align:left; font-family:"IBM Plex Mono"; font-weight:500; font-size:.63rem; text-transform:uppercase;
+    letter-spacing:.08em; color:var(--text-faint); padding:9px 12px; border-bottom:1px solid var(--border); white-space:nowrap; }
+  td{ padding:8px 12px; border-bottom:1px solid var(--border-soft); vertical-align:top; }
+  tr:last-child td{ border-bottom:none; }
+  td.pid{ font-family:"IBM Plex Mono"; color:var(--brass); white-space:nowrap; }
+  td.range{ font-family:"IBM Plex Mono"; color:var(--text-faint); white-space:nowrap; font-size:.72rem; }
+  td.desc{ color:var(--text-dim); }
+  .subhead{ font-family:"IBM Plex Mono"; font-size:.68rem; text-transform:uppercase; letter-spacing:.08em;
+    color:var(--violet); margin:22px 0 8px; }
+  .readout-note{ display:flex; gap:14px; background:var(--surface); border:1px solid var(--border-soft); border-radius:8px;
+    padding:16px 18px; margin-top:8px; align-items:flex-start; }
+  .readout-note .dot{ flex:none; width:9px; height:9px; border-radius:50%; background:var(--sage); margin-top:6px; }
+  .readout-note p{ margin:0; color:var(--text-dim); font-size:.87rem; }
+  .readout-note code{ font-family:"IBM Plex Mono"; color:var(--sage); font-size:.82rem; }
+  .steps{ counter-reset:step; list-style:none; margin:0; padding:0; }
+  .steps li{ counter-increment:step; position:relative; padding:8px 0 8px 34px; color:var(--text-dim); font-size:.87rem; line-height:1.55; }
+  .steps li::before{ content:counter(step); position:absolute; left:0; top:8px; width:22px; height:22px; border-radius:50%;
+    background:var(--surface-2); border:1px solid var(--violet-dim); color:var(--violet); font-family:"IBM Plex Mono";
+    font-weight:600; font-size:.7rem; display:flex; align-items:center; justify-content:center; }
+  .steps b{ color:var(--text); font-weight:600; }
+  .steps code{ font-family:"IBM Plex Mono"; color:var(--brass); font-size:.85em; }
+  footer{ margin-top:60px; padding-top:20px; border-top:1px solid var(--border); color:var(--text-faint); font-size:.76rem;
+    display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="crumbs">Orch System → Note Path (generative) → <b>OrchDelay</b></div>
+
+  <div class="nameplate">
+    <div>
+      <h1>OrchDelay</h1>
+      <div class="role">A responsorial delay — buffers a captured phrase and fires it back once, N bars later, optionally transformed. Not a fixed chain position: an insert you place wherever a call-and-response echo is wanted.</div>
+    </div>
+    <div class="badges">
+      <span class="badge chain">MIDI-FX · flexible insert</span>
+      <span class="badge live">live</span>
+      <span class="badge plugin-code mono">Odly</span>
+    </div>
+  </div>
+
+  <p class="lede">
+    29 real parameters, one static view — big enough that this guide switches from one marker per control to one
+    marker per <strong>region</strong>, with full tables underneath carrying the exhaustive detail. Live notes are
+    captured into a buffer and echoed back exactly once (no looping/feedback), optionally transposed, retrograded,
+    inverted, rotated, truncated, transformed by M7, time-stretched, or interval-scaled — either an explicit manual
+    choice or a seeded, phrase-content-aware proposal. A 4-slot memory system (3 local banks + phrases received from
+    <em>other</em> OrchDelay instances) lets it echo something other than just the most recent phrase, on demand or
+    entirely on its own clock.
+  </p>
+
+  <div class="section-head"><span class="num">01</span><h2>The Editor</h2><div class="rule"></div></div>
+  <p class="section-note">
+    One static view, two columns: capture &amp; timing on the left (how a phrase gets buffered and when it fires
+    back), transform on the right (what changes about it, plus the cross-instance broadcast controls at the
+    bottom). The status line folds every session counter into one readout — the fastest way to tell a genuinely
+    silent session apart from one that's just still mid-hold.
+  </p>
+
+  <div class="layout">
+    <div class="shot-frame">
+      <img src="assets/orchdelay-editor.png" alt="OrchDelay editor, real screenshot, Standalone build, 10 numbered regions">
+      <div class="marker" style="left:50.0%; top:14.2%">1</div>
+      <div class="marker" style="left:26.0%; top:20.3%">2</div>
+      <div class="marker" style="left:26.0%; top:32.9%">3</div>
+      <div class="marker" style="left:26.0%; top:51.7%">4</div>
+      <div class="marker" style="left:26.0%; top:70.6%">5</div>
+      <div class="marker" style="left:26.0%; top:83.1%">6</div>
+      <div class="marker" style="left:75.0%; top:23.5%">7</div>
+      <div class="marker" style="left:75.0%; top:45.5%">8</div>
+      <div class="marker" style="left:75.0%; top:70.6%">9</div>
+      <div class="marker" style="left:50.0%; top:92.0%">10</div>
+    </div>
+    <div class="region-list">
+      <div class="region"><div class="badge-num">1</div><div>
+        <div class="r-name">Bypass</div>
+        <div class="r-members mono">bypass</div>
+        <div class="r-desc">Passes MIDI straight through and drains any held/pending material — the hard reset. Every other control on this page is inert while this is on.</div>
+      </div></div>
+      <div class="region"><div class="badge-num">2</div><div>
+        <div class="r-name">Capture Mode</div>
+        <div class="r-members mono">captureMode</div>
+        <div class="r-desc">How a live note relates to an echo already sounding. Replace (default) fully swallows live input — only the delayed echo sounds. Overlay lets live playing continue underneath an echo. Duck thins live notes outside the echo's own current pitch range. The live note is ALWAYS still captured for its own future echo regardless of this setting.</div>
+      </div></div>
+      <div class="region"><div class="badge-num">3</div><div>
+        <div class="r-name">Hold, Overlap &amp; Phrase Boundaries</div>
+        <div class="r-members mono">holdBars · holdBarsRandom · overlapMode · phraseGapBeats</div>
+        <div class="r-desc">Hold Bars is the core "how far in the future" control — 0 is a dedicated pause-capturing state, not a random outcome (Random Hold Bars never draws it). Overlap Mode governs what happens when a due echo collides with one still sounding: Overlap fires anyway (piano-friendly), Wait holds it back and shifts its whole schedule forward once clear, Skip discards it. Phrase Gap is the silence threshold that closes a captured phrase.</div>
+      </div></div>
+      <div class="region"><div class="badge-num">4</div><div>
+        <div class="r-name">Phrase Quality &amp; Memory Recall</div>
+        <div class="r-members mono">minimumInterest · callbackProbability · autonomousFireBars</div>
+        <div class="r-desc">Minimum Interest gates weak captures (default 0% = every phrase always echoes). Callback Probability occasionally echoes an OLDER phrase from Active Bank instead of the one that just closed. Autonomous Fire lets the device free-run from Active Bank on its own "every N bars" clock, entirely independent of new incoming MIDI — deliberately orthogonal to Hold Bars' own pause state.</div>
+      </div></div>
+      <div class="region"><div class="badge-num">5</div><div>
+        <div class="r-name">Multi-Bank Memory</div>
+        <div class="r-members mono">captureBank · activeBank · recencyBias</div>
+        <div class="r-desc">3 independent local banks (A/B/C). Capture Bank picks which one newly-closed phrases land in; Active Bank (A/B/C/Remote) picks which one Callback Probability and Autonomous Fire draw FROM — deliberately decoupled, so a new bank can build up fresh material while a different one keeps playing. Clear Bank empties whichever bank Capture Bank currently points to. Recency Bias (0% default) biases the pool draw toward more recently-captured entries instead of a flat uniform pick. Full detail in §03.</div>
+      </div></div>
+      <div class="region"><div class="badge-num">6</div><div>
+        <div class="r-name">Instance Seed</div>
+        <div class="r-members mono">instanceSeed</div>
+        <div class="r-desc">This instance's own hash key for every seeded draw in the plugin — transform choice, every Random toggle, every pool pick. Deterministic and reload-stable: the same seed always reproduces the same sequence of choices. Randomize writes a fresh value through the normal parameter path (undoable, saved in state).</div>
+      </div></div>
+      <div class="region"><div class="badge-num">7</div><div>
+        <div class="r-name">Restlessness &amp; Transform Choice</div>
+        <div class="r-members mono">restlessness · contentAwareWeighting · manualTransform</div>
+        <div class="r-desc">Transform is the manual override — any explicit choice always wins outright. Left on Follow Restlessness, the Restlessness slider is the probability of proposing a non-verbatim transform per phrase (0% = always verbatim). Content-Aware Weighting (default ON) biases WHICH transform gets picked by the phrase's own density/pitch-spread/note-count instead of a flat 1-in-8 chance.</div>
+      </div></div>
+      <div class="region"><div class="badge-num">8</div><div>
+        <div class="r-name">Transform Amounts</div>
+        <div class="r-members mono">transposeSemitones · rotationSteps · lengthPercent · stretchPercent · intervalScalePercent (+ each own Random)</div>
+        <div class="r-desc">The amount used whenever each transform is active, whether reached manually or via Follow Restlessness. Stretch additionally has Quantize (snaps to a notation-friendly ratio vocabulary instead of an arbitrary percentage). Full table in §02.</div>
+      </div></div>
+      <div class="region"><div class="badge-num">9</div><div>
+        <div class="r-name">Cross-Instance Broadcast</div>
+        <div class="r-members mono">linkHub · broadcastChannel · listenChannel</div>
+        <div class="r-desc">Lets one instance's captured phrases feed another instance's Remote bank directly — in-process, no MIDI cable needed between tracks. Broadcast Hub elects this instance as the shared relay (exactly one per rig). Broadcast Channel publishes captured phrases; Listen Channel receives them from other instances into Remote. Clear Remote empties the Remote bank specifically. Full setup recipe in §04.</div>
+      </div></div>
+      <div class="region"><div class="badge-num">10</div><div>
+        <div class="r-name">Status Line</div>
+        <div class="r-desc">Session-lifetime counters (reset only on transport prepare), not just live state — pending/captured/closed/fired/skipped counts, the last scheduled-vs-reached ppq, the last resolved transform choice, phrase-quality/callback/autofire counters, and the link's own mode (<code class="mono">hub</code> / <code class="mono">hub(busy)</code> / <code class="mono">client(ok)</code> / <code class="mono">client(--)</code>) plus a running count of phrases received from other instances.</div>
+      </div></div>
+    </div>
+  </div>
+  <div class="shot-caption">Real capture of the Standalone build, default state (no host transport, hence the inactive status line).</div>
+
+  <div class="section-head"><span class="num">02</span><h2>Transform Vocabulary</h2><div class="rule"></div></div>
+  <p class="section-note">
+    9 real transforms plus "Follow Restlessness" (a proposal, not a transform itself). All operate directly on the
+    buffered note data — OrchDelay never talks CC-to-MPL, it reimplements the math itself. Two deliberate
+    divergences from MPL's own vocabulary: Inversion mirrors around the phrase's own first/anchor note (not a fixed
+    axis — keeps an echo in the register the player was actually in), and Retrograde is a true whole-phrase time
+    reversal (not a step-grid read-position reversal, which has no meaning for a real-timestamp phrase).
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Transform</th><th>Amount param</th><th>Range</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td class="desc">None</td><td class="pid">—</td><td class="range">—</td><td class="desc">Verbatim echo, unchanged.</td></tr>
+        <tr><td class="desc">Transpose</td><td class="pid">transposeSemitones</td><td class="range">-48…48</td><td class="desc">Fixed pitch shift, clamped to 0-127.</td></tr>
+        <tr><td class="desc">Retrograde</td><td class="pid">—</td><td class="range">—</td><td class="desc">Whole-phrase time reversal around its own midpoint, each note's own duration preserved.</td></tr>
+        <tr><td class="desc">Inversion</td><td class="pid">—</td><td class="range">—</td><td class="desc">Pitch-axis mirror around the phrase's own first/anchor note.</td></tr>
+        <tr><td class="desc">Rotation</td><td class="pid">rotationSteps</td><td class="range">-16…16</td><td class="desc">Cyclic reassignment of which captured note's pitch/velocity/channel sounds at each onset slot; wraps to the phrase's own note count.</td></tr>
+        <tr><td class="desc">Length</td><td class="pid">lengthPercent</td><td class="range">1…100%</td><td class="desc">Truncates to the first N% of notes by onset order — note count only, never rescales timing.</td></tr>
+        <tr><td class="desc">M7</td><td class="pid">—</td><td class="range">—</td><td class="desc">Pitch-class ×7 mod 12, octave preserved — a pure per-note operation.</td></tr>
+        <tr><td class="desc">Stretch</td><td class="pid">stretchPercent (+ Quantize)</td><td class="range">25…400%</td><td class="desc">Proportional time-stretch around the phrase's own start. Quantize restricts the actual ratio used to a notation-friendly vocabulary (25/33.3/50/66.7/75/100/133.3/150/200/300/400%) instead of an arbitrary in-between value.</td></tr>
+        <tr><td class="desc">Interval</td><td class="pid">intervalScalePercent</td><td class="range">0…300%</td><td class="desc">Scales every interval from the phrase's own anchor note — &gt;100% widens the melodic shape's leaps, &lt;100% narrows them. Defaults to 150% so picking it is immediately audible.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="section-note">Transpose, Rotation, Length, Stretch, and Interval each have their own Random toggle — drawn deterministically per phrase from Instance Seed + phrase count (reload-stable, never a bare RNG). Transpose/Rotation draw a symmetric range around 0; Length uses its own slider as a ceiling (no negative meaning); Stretch/Interval draw from [100%, slider] on whichever side of 100 the slider sits, since their own neutral point is 100%, not 0.</p>
+
+  <div class="section-head"><span class="num">03</span><h2>Multi-Bank Memory &amp; Recency</h2><div class="rule"></div></div>
+  <p class="section-note">
+    A development-section workflow: build up new material in one bank while a different one keeps playing, then
+    switch over. Callback Probability and Autonomous Fire are the only two consumers of the pool, and they always
+    share the SAME Active Bank — splitting them would let the pool a track is "currently developing from" silently
+    fork with no musical rationale.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Control</th><th>Range</th><th>Role</th></tr></thead>
+      <tbody>
+        <tr><td class="pid">Capture Bank</td><td class="range">A · B · C</td><td class="desc">Where a newly-closed phrase gets written. Never Remote — that bank is populated exclusively by incoming broadcasts.</td></tr>
+        <tr><td class="pid">Active Bank</td><td class="range">A · B · C · Remote</td><td class="desc">Where Callback Probability AND Autonomous Fire both read from. Switch this to bring a different bank's material into play without touching what's currently being captured.</td></tr>
+        <tr><td class="pid">Clear Bank</td><td class="range">button</td><td class="desc">Empties whichever bank Capture Bank currently points to.</td></tr>
+        <tr><td class="pid">Recency Bias</td><td class="range">0–100%</td><td class="desc">0% (default) = flat uniform pick across the whole pool, exactly the original behavior. Above 0%, the draw weights pool index i as (i+1)^exponent (exponent climbing 0→4) — increasingly favoring the newest few entries.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="section-note">Each bank holds the most-recent 8 phrases actually PLAYED (never a callback substitution itself), oldest evicted first once full.</p>
+
+  <div class="section-head"><span class="num">04</span><h2>Cross-Instance Broadcast</h2><div class="rule"></div></div>
+  <p class="section-note">
+    Lets phrase material cross between OrchDelay instances directly, in-process, over a local loopback relay — no
+    MIDI cable between tracks. Every instance is symmetric: it can publish and/or subscribe at once, regardless of
+    which one happens to run the shared relay. Absolute host ppq needs no translation crossing instances, since
+    every instance already reads the same transport — this is what makes direct pool-sharing tractable at all.
+  </p>
+  <div class="subhead">Setup: 1 Hub + N Listeners</div>
+  <ol class="steps">
+    <li>On the source instance: turn <b>Broadcast Hub</b> ON. Exactly one instance in the whole project should have this on — it opens the shared relay.</li>
+    <li>Set its <b>Broadcast Channel</b> to any number 1–8. Feed it MIDI as usual; every phrase it captures now also publishes on that channel.</li>
+    <li>On each listener instance: leave Broadcast Hub OFF. No MIDI input is required.</li>
+    <li>Set <b>Listen Channel</b> to the same number as the Hub's Broadcast Channel.</li>
+    <li>Set <b>Active Bank</b> to <b>Remote</b>.</li>
+    <li>Set <b>Autonomous Fire (bars)</b> &gt; 0 — this is what actually makes a listener with no local MIDI input audible. Callback Probability only ever evaluates when a phrase closes LOCALLY, so it does nothing on a pure listener.</li>
+    <li>Check each instance's status line: the Hub should read <code>hub</code> — if it instead reads <code>hub(busy)</code>, another instance already has Broadcast Hub on. Listeners should read <code>client(ok)</code> once connected, with <code>remoteIn</code> counting up as phrases arrive.</li>
+  </ol>
+  <p class="section-note">Multiple independent broadcaster/listener groups can share the same one Hub without cross-talk, each isolated on its own channel number — like several stations sharing one transmission tower. An instance's own Broadcast Channel and Listen Channel are independent, so it can also listen on one channel while publishing what it does with that material on a different one, chaining instances into a relay rather than only a star topology.</p>
+
+  <div class="section-head"><span class="num">05</span><h2>Full Parameter Table</h2><div class="rule"></div></div>
+  <p class="section-note">All 29 parameters are host-automatable APVTS parameters — there is no plugin-internal state hidden from automation, unlike some of this plugin's denser siblings.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Parameter</th><th>Range / Choices</th><th>Default</th></tr></thead>
+      <tbody>
+        <tr><td class="pid">bypass</td><td class="range">Off/On</td><td class="range">Off</td></tr>
+        <tr><td class="pid">captureMode</td><td class="range">Replace · Overlay · Duck</td><td class="range">Replace</td></tr>
+        <tr><td class="pid">holdBars</td><td class="range">0–16 (0 = pause capturing)</td><td class="range">4</td></tr>
+        <tr><td class="pid">holdBarsRandom</td><td class="range">Off/On</td><td class="range">Off</td></tr>
+        <tr><td class="pid">overlapMode</td><td class="range">Overlap · Wait · Skip</td><td class="range">Overlap</td></tr>
+        <tr><td class="pid">phraseGapBeats</td><td class="range">0.25–8.0 beats</td><td class="range">1.0</td></tr>
+        <tr><td class="pid">minimumInterest</td><td class="range">0–100%</td><td class="range">0%</td></tr>
+        <tr><td class="pid">callbackProbability</td><td class="range">0–100%</td><td class="range">0%</td></tr>
+        <tr><td class="pid">autonomousFireBars</td><td class="range">0–16 (0 = off)</td><td class="range">0</td></tr>
+        <tr><td class="pid">captureBank</td><td class="range">A · B · C</td><td class="range">A</td></tr>
+        <tr><td class="pid">activeBank</td><td class="range">A · B · C · Remote</td><td class="range">A</td></tr>
+        <tr><td class="pid">recencyBias</td><td class="range">0–100%</td><td class="range">0%</td></tr>
+        <tr><td class="pid">instanceSeed</td><td class="range">0–127</td><td class="range">0</td></tr>
+        <tr><td class="pid">restlessness</td><td class="range">0–100%</td><td class="range">0%</td></tr>
+        <tr><td class="pid">contentAwareWeighting</td><td class="range">Off/On</td><td class="range">On</td></tr>
+        <tr><td class="pid">manualTransform</td><td class="range">Follow Restlessness · None · Transpose · Retrograde · Inversion · Rotation · Length · M7 · Stretch · Interval</td><td class="range">Follow Restlessness</td></tr>
+        <tr><td class="pid">transposeSemitones / transposeRandom</td><td class="range">-48…48</td><td class="range">12 / Off</td></tr>
+        <tr><td class="pid">rotationSteps / rotationRandom</td><td class="range">-16…16</td><td class="range">1 / Off</td></tr>
+        <tr><td class="pid">lengthPercent / lengthRandom</td><td class="range">1–100%</td><td class="range">50% / Off</td></tr>
+        <tr><td class="pid">stretchPercent / stretchRandom / stretchQuantized</td><td class="range">25–400%</td><td class="range">100% / Off / Off</td></tr>
+        <tr><td class="pid">intervalScalePercent / intervalRandom</td><td class="range">0–300%</td><td class="range">150% / Off</td></tr>
+        <tr><td class="pid">linkHub</td><td class="range">Off/On</td><td class="range">Off</td></tr>
+        <tr><td class="pid">broadcastChannel</td><td class="range">0–8 (0 = off)</td><td class="range">0</td></tr>
+        <tr><td class="pid">listenChannel</td><td class="range">0–8 (0 = off)</td><td class="range">0</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="readout-note">
+    <div class="dot"></div>
+    <p>The status line's own <code>cap</code>/<code>cls</code>/<code>fire</code> counters are the fastest way to
+    tell a genuinely silent session apart from one that's just mid-hold: MIDI never arrived at all
+    (<code>cap</code> stays 0) vs. arrived but never closed into a phrase (<code>cls</code> stays 0) vs. closed but
+    never fired yet (<code>fire</code> stays 0, still waiting on Hold Bars).</p>
+  </div>
+
+  <footer>
+    <span>Source: <span class="mono">Source/OrchDelayProcessor.cpp</span>, <span class="mono">createParameterLayout()</span> — regenerate this table if that function changes.</span>
+    <span>OrchDelay · <span class="mono">johnpascu77-dotcom</span></span>
+  </footer>
+
+</div>
+</body>
+</html>
