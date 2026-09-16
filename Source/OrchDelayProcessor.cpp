@@ -722,6 +722,42 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
 
         furthestBlockPpqUi.store (blockEndPpq);
 
+        // --- emit note-offs for anything whose scheduled off has arrived --
+        // Moved to run BEFORE the phrase fire/release loop below (it used
+        // to run after, at the end of the block) - see Docs SS29. A
+        // Wait-queued phrase's busy check reads activeFiredNotes, and with
+        // the old ordering a note whose own off fell inside THIS block
+        // still looked "active" until the NEXT block's iteration, forcing
+        // release a full block later than the device actually freed up -
+        // and anchored to that later block's own coarse blockStartPpq on
+        // top of it. Running this first closes that gap: by the time the
+        // busy check runs, anything that finished within this same block
+        // has already been removed. justClearedPpq additionally records the
+        // precise ppq of whatever just cleared, so a release this block can
+        // anchor to that instead of blockStartPpq - see below.
+        // Same widened-condition reasoning as the fire loop below: a
+        // due-or-overdue note-off (noteOffPpq < blockEndPpq) still fires
+        // now, clamped into this block, rather than risking a stuck note if
+        // its exact target ppq had fallen through a gap between two blocks'
+        // own windows.
+        double justClearedPpq = -1.0;
+
+        for (auto it = activeFiredNotes.begin(); it != activeFiredNotes.end(); )
+        {
+            if (it->noteOffPpq < blockEndPpq)
+            {
+                const int offSample = juce::jlimit (0, juce::jmax (0, numSamples - 1),
+                                                    juce::roundToInt ((it->noteOffPpq - blockStartPpq) / ppqPerSample));
+                output.addEvent (juce::MidiMessage::noteOff (it->channel, it->pitch), offSample);
+                justClearedPpq = juce::jmax (justClearedPpq, it->noteOffPpq);
+                it = activeFiredNotes.erase (it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+
         // --- fire each note of each pending phrase INDEPENDENTLY ----------
         // Each note fires the first block its OWN outputOnsetPpq arrives -
         // never all of a phrase's notes bundled into whichever block first
@@ -778,8 +814,16 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
                 // shift its whole remaining schedule to start right now,
                 // preserving its own internal rhythm rather than firing
                 // every already-overdue note in one clump the instant the
-                // coast clears.
-                const double shift = blockStartPpq - phrase.outputNotes.front().outputOnsetPpq;
+                // coast clears. Anchor to the precise ppq the device just
+                // cleared (justClearedPpq, from the reordered note-off loop
+                // above) rather than blockStartPpq - see Docs SS29. Using
+                // blockStartPpq always rounded the release up to whichever
+                // block first noticed, adding up to a whole block of pure,
+                // one-directional lateness on every single Wait-release,
+                // which then compounded across a take (each late release
+                // also delays when the next queued phrase can release).
+                const double releasePpq = juce::jmax (blockStartPpq, justClearedPpq);
+                const double shift = releasePpq - phrase.outputNotes.front().outputOnsetPpq;
                 if (shift > 0.0)
                     odly::shiftOutputNotes (phrase, shift);
             }
@@ -823,27 +867,6 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         pendingPhrases.erase (std::remove_if (pendingPhrases.begin(), pendingPhrases.end(),
                                               [] (const odly::Phrase& p) { return p.fired; }),
                               pendingPhrases.end());
-
-        // --- emit note-offs for anything whose scheduled off has arrived --
-        // Same widened-condition reasoning as the fire loop above: a
-        // due-or-overdue note-off (noteOffPpq < blockEndPpq) still fires
-        // now, clamped into this block, rather than risking a stuck note if
-        // its exact target ppq had fallen through a gap between two blocks'
-        // own windows.
-        for (auto it = activeFiredNotes.begin(); it != activeFiredNotes.end(); )
-        {
-            if (it->noteOffPpq < blockEndPpq)
-            {
-                const int offSample = juce::jlimit (0, juce::jmax (0, numSamples - 1),
-                                                    juce::roundToInt ((it->noteOffPpq - blockStartPpq) / ppqPerSample));
-                output.addEvent (juce::MidiMessage::noteOff (it->channel, it->pitch), offSample);
-                it = activeFiredNotes.erase (it);
-            }
-            else
-            {
-                ++it;
-            }
-        }
     }
 
     midiMessages.swapWith (output);

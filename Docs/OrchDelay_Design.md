@@ -1180,3 +1180,68 @@ targets exactly the pure-math piece that was actually wrong.
 
 Rebuilt + reinstalled, Build ~2026-09-16. **Not yet live-tested** - required before calling this
 actually done, per this repo's own established discipline.
+
+## SS29. Wait-release drift - the same anti-pattern class as SS28, found in a different spot
+
+Reported live, after SS28's fix was already installed: "Better overall. No more 'particles', but we can
+still see the drifting towards the ending of phrases, per track, like very small values are slowly
+adding up with each note." First hypothesis - different random Stretch draws per phrase producing
+apparent drift - was directly challenged and correctly ruled out by the user: "we said that even in
+Random mode, Stretch would apply only consacrated binary or ternary values, not 'in-betweens'." A real
+inter-onset-interval pass over the reported take confirmed this: the ratios clustered tightly on clean,
+unstretched values (0.25/0.33/0.5/~0.7/1.0/1.5/2.0 of a quarter) across the whole take, not on a mix of
+random Stretch ratios - ruling out Stretch variance as the driver and pointing back at the scheduler
+itself, the same place SS28's bug lived.
+
+**Root cause, architecturally identical to SS28's jitter cause**: Overlap Mode "Wait" (see SS17), when
+releasing a phrase that had been held because `activeFiredNotes` was non-empty, anchored the release to
+`blockStartPpq - phrase.outputNotes.front().outputOnsetPpq` rather than to the precise moment the device
+actually became free. Worse than SS28's single-cause version, this one had two layers:
+
+1. **Stale busy-state**: the note-off removal loop (clearing `activeFiredNotes` for notes whose own off
+   had arrived) ran AFTER the phrase fire/release loop in the same `processBlock` call. So a note that
+   finished partway through the current block still counted as "active" for this block's busy check -
+   release could only happen on the FOLLOWING block, a full block later than the device actually freed
+   up.
+2. **Coarse anchor**: even once released, the shift was anchored to that following block's own
+   `blockStartPpq` (block-granular) rather than the actual ppq the device cleared - the same
+   `blockStartPpq`-as-"now" anti-pattern SS28 already fixed for Autonomous Fire, just in the Wait-release
+   path instead of the re-arm path.
+
+Both layers push the release strictly later, never earlier, and `odly::shiftOutputNotes` then carries
+that lateness through the phrase's ENTIRE remaining note schedule (correct behavior in itself -
+preserving the phrase's own internal rhythm - but it means the error is baked into every later note of
+that release, not just the first). Because a late release also delays when the device next reads as
+free, each Wait-release can nudge the NEXT queued release later still - a genuine compounding effect
+that grows with the NUMBER of Wait-release events over a take, not with elapsed time. That matches "very
+small values slowly adding up with each note" exactly, and explains why it showed up specifically
+"towards the ending of phrases" once a take had accumulated enough busy periods.
+
+**Fix**: the note-off removal loop was moved to run BEFORE the phrase fire/release loop within the same
+block (fixing layer 1 - a note-off that lands inside the current block is now cleared from
+`activeFiredNotes` before the busy check runs), and it now records `justClearedPpq`, the precise ppq of
+whatever note-off it just processed. The Wait-release anchor became `releasePpq = juce::jmax
+(blockStartPpq, justClearedPpq)` instead of bare `blockStartPpq` (fixing layer 2 - when the device frees
+up mid-block, the release anchors to that precise moment rather than rounding up to the block boundary).
+No new pure function was needed (unlike SS28's `resolveNextAutonomousFirePpq`) - this was purely a
+processor-level reordering plus a more precise anchor value, so no new `odly::` test coverage was added;
+`shiftOutputNotes` itself (already tested) was untouched.
+
+Rebuilt + reinstalled, Build ~2026-09-16. **Not yet live-tested** - required before calling this actually
+done.
+
+**On the "Wait" naming challenge** - also raised in the same report: "If 'Wait' is not waiting the
+previous phrase to end, then why we called it this way? ... this seems more like Overlapping." This is a
+fair challenge to the NAME, and worth being direct about rather than talking around it. Overlap Mode has
+only ever governed one thing (see SS17 and the comment at the top of the fire/release loop in
+`processBlock`): whether a phrase's own FIRST note may start while an EARLIER PHRASE's notes are still
+sounding. It has never gated a phrase's own LATER notes against its own busy state, and it has never
+touched a single phrase's own internal texture - "a Stretched phrase's own notes overlapping each other
+is left alone" is a deliberate, pre-existing design choice (not something changed by this fix). So the
+"polyphonic overlapping" reported separately from the SAME session, on the short Hub-solo take, is very
+likely that exact mechanism: a single phrase's own Stretch-lengthened notes overlapping themselves, which
+"Wait" was never designed to prevent - not a Wait-gating failure between two different phrases. The
+user explicitly declined the "monophonic" fix (clip/shorten a phrase's own overlapping notes) as "too
+experimental (hence motive-killer)," so this stays as documented, known behavior rather than something to
+change: Wait prevents a NEW phrase from starting over an OLD one's still-sounding notes; it was never a
+promise that any one phrase's own material stays monophonic against itself.
