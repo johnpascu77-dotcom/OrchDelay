@@ -1111,6 +1111,21 @@ so the live test matters more than usual here. Phase-aligning independent Autono
 (interpretation 1 from this section's own opening) and a designed canon/round firing relationship
 (interpretation 3) remain unbuilt, un-requested follow-ups if the user ever wants to revisit them.
 
+**Bug found before any live IPC test even happened**: walking the user through the exact 3-instance
+setup (1 Hub + 2 Listeners) surfaced that the "Remote" choice this section added to `activeBank` was
+completely invisible in the actual Active Bank dropdown - only "A"/"B"/"C" ever showed. Root cause: the
+`AudioParameterChoice` itself was correctly widened to 4 choices in `createParameterLayout()`, but the
+corresponding `activeBankBox` `ComboBox` in the editor still only had 3 `addItem()` calls left over from
+before this section's own change - `ComboBoxAttachment` maps ComboBox item IDs 1..N directly onto the
+AudioParameterChoice's own choice indices 0..N-1, so a ComboBox with fewer items than its backing
+parameter simply makes the extra choice(s) unreachable through the UI, even though the parameter itself
+supports them (automation/state could still reach index 3, just never a mouse click). Fixed by adding
+the missing `activeBankBox.addItem ("Remote", 4);`. A follow-up audit of all 5 ComboBoxes in the editor
+(`captureModeBox`/`overlapModeBox`/`captureBankBox`/`activeBankBox`/`transformBox`) against their own
+backing `AudioParameterChoice` `StringArray`s confirmed this was an isolated slip, not a systemic
+pattern - every other ComboBox's item list already matched its parameter's choice list exactly (count,
+text, and order). Rebuilt + reinstalled.
+
 ## SS28. Autonomous Fire drift/jitter - a real bug in the re-arm math and the fire anchor
 
 Reported live: "I begin to feel the need to correct the Autonomous Fire phase drift, because I get a

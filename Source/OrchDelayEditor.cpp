@@ -138,6 +138,7 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     activeBankBox.addItem ("A", 1);
     activeBankBox.addItem ("B", 2);
     activeBankBox.addItem ("C", 3);
+    activeBankBox.addItem ("Remote", 4);
     activeBankBox.setColour (juce::ComboBox::backgroundColourId, kBoxBackground);
     activeBankBox.setColour (juce::ComboBox::textColourId, juce::Colours::white);
     activeBankBox.setColour (juce::ComboBox::outlineColourId, kOutline);
