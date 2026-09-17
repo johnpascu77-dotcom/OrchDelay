@@ -221,6 +221,7 @@ void OrchDelayLink::run()
         }
 
         serviceOwnPublish();
+        serviceRelayPublish();
         serviceHeartbeat();
 
         wait (kPollMs);
@@ -277,6 +278,7 @@ void OrchDelayLink::reconcileMode()
         {
             client = std::make_unique<ClientConnection> (*this);
             lastPublishedGeneration = -1;
+            lastPublishedRelayGeneration = -1;
         }
     }
 }
@@ -299,6 +301,43 @@ void OrchDelayLink::serviceOwnPublish()
     lastPublishedGeneration = generation;
 
     const auto entry = processor.snapshotLastCapturedForBroadcast();
+    const auto message = phraseMessageFrom (channel, entry);
+
+    if (mode.load() == Mode::Hub)
+    {
+        std::lock_guard<std::mutex> lock (connectionsMutex);
+        for (auto& connection : serverConnections)
+            sendJson (*connection, message);
+    }
+    else if (client != nullptr && client->isConnected())
+    {
+        sendJson (*client, message);
+    }
+}
+
+// Relay (Docs SS35) - a second, independent "is there something new to
+// publish" check, tracked separately from serviceOwnPublish's own
+// generation counter (see lastRelayEntry's own doc comment in the header
+// for why: a live capture and a relay firing can happen in the same block,
+// sharing one channel would let one silently clobber the other). Otherwise
+// an exact structural mirror of serviceOwnPublish above - same channel to
+// send on (this instance's own Broadcast Channel; relaying uses the SAME
+// channel as first-hand captures, not a separate one), same Hub-fan-out-
+// vs-Client-single-send split. The hop count itself already rode along
+// inside the entry (see odly::MemoryEntry::hopCount) - nothing extra to do
+// with it here, phraseMessageFrom/memoryEntryToVar already serialize it.
+void OrchDelayLink::serviceRelayPublish()
+{
+    const int channel = processor.getBroadcastChannelForUi();
+    if (channel <= 0)
+        return;
+
+    const int generation = processor.getRelayGenerationForUi();
+    if (generation == lastPublishedRelayGeneration)
+        return;
+    lastPublishedRelayGeneration = generation;
+
+    const auto entry = processor.snapshotLastRelayForBroadcast();
     const auto message = phraseMessageFrom (channel, entry);
 
     if (mode.load() == Mode::Hub)

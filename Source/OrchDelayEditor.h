@@ -161,6 +161,14 @@ private:
     juce::Label listenChannelLabel;
     juce::Slider listenChannelSlider;
 
+    // Off by default (Docs SS35) - re-broadcasts Remote-bank material this
+    // instance fires via Autonomous Fire, on its own Broadcast Channel
+    // above, tagged with an incremented hop count. What actually lets a
+    // chain of instances pass material along past a node with no live MIDI
+    // of its own, rather than each one only ever playing back what it
+    // directly received.
+    juce::ToggleButton relayEnabledButton;
+
     juce::Label instanceSeedLabel;
     juce::Slider instanceSeedSlider;
     juce::TextButton randomizeSeedButton;
@@ -257,6 +265,7 @@ private:
     std::unique_ptr<ButtonAttachment> linkHubAttachment;
     std::unique_ptr<SliderAttachment> broadcastChannelAttachment;
     std::unique_ptr<SliderAttachment> listenChannelAttachment;
+    std::unique_ptr<ButtonAttachment> relayEnabledAttachment;
     std::unique_ptr<SliderAttachment> instanceSeedAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (OrchDelayAudioProcessorEditor)

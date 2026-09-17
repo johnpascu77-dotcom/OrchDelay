@@ -1580,3 +1580,57 @@ readout's own font/height (13pt/82px -> 11pt/68px) to buy back real space, and t
 starting point. Verified via Standalone: content lays out correctly and the status text displays in full
 once the window is given more room (tested by resizing to 1350x1050), confirming resizing itself works
 end-to-end, not just declared.
+
+## SS35. Relay - letting a chain actually pass material past a node with no live input of its own
+
+Direct follow-up, same session: with the string-quartet cascade now correctly wired and visible (SS33/34),
+Violin 2 and everything downstream of it (Viola, Violoncello) stayed silent. Confirmed with real data
+before building anything - Violin 2's own status line read `cap 0 cls 0` alongside `fire 30`: genuinely
+active playback, but zero live MIDI of its own ever reaching it. This is the exact limitation named when
+click-to-wire shipped (Docs SS33): `scheduleClosedPhrase` only ever fires from a phrase THIS instance
+closes from LIVE MIDI it personally receives, never from material it's only echoing back after receiving
+it from upstream - so Violin 2 had nothing NEW to hand to Viola no matter how correctly it was wired. User
+confirmed: build the relay feature.
+
+**Design**: when an instance draws a phrase from its own Remote bank via Autonomous Fire (deliberately
+NOT from its own local A/B/C banks - that content already went out once, at its own original capture;
+re-sending it on every autonomous fire would just be redundant traffic) and Relay Remote Material is on,
+it now also hands that same content back to the Link to broadcast onward, on its own existing Broadcast
+Channel (no separate relay-channel parameter - one instance, one outgoing channel, whatever the source of
+the content). Opt-in per instance (new `relayEnabled` bool, default off) rather than automatic everywhere
+- a chain should only forward where the user actually wants it to; Violin 2 and Viola need it on,
+Violoncello (nothing listens to it) doesn't.
+
+**Safety net against a miswired cycle**: `odly::MemoryEntry` gained a `hopCount` field (0 for anything
+captured first-hand; incremented by 1 on each relay hop), serialized through the existing
+`memoryEntryToVar`/`memoryEntryFromVar` wire format (a new `"hop"` JSON property - reuses the exact same
+`"t":"phrase"` message shape as an ordinary capture, no new message type needed, since a relay IS just a
+MemoryEntry with a channel like any other). Capped at `kMaxRelayHops` (8, matching the 0-8 Broadcast
+Channel range - no deeper significance, just comfortably covers any realistic chain while staying a small,
+finite bound): an instance still plays material past the cap locally, it just stops passing it further.
+This bounds a genuinely miswired cycle to finite circulation instead of forever, without needing a more
+complex origin-tag scheme - discussed with the user back when click-to-wire's own trust boundary was
+first raised, this is that promised safety net.
+
+**Implementation**: a SEPARATE outgoing channel from the existing live-capture one
+(`lastRelayEntry`/`relayGenerationUi`/`lastRelayMutex`, mirroring `lastCapturedEntry`/`capturedGenerationUi`
+exactly) rather than reusing it - a live capture closing and a relay firing can both happen within the
+same block, and sharing one slot would let one silently overwrite the other before the Link's next poll
+ever reads it. `checkAutonomousFire` writes to it (try_lock, audio thread) right after a successful
+Remote-bank draw, when `relayEnabled && activeBankIndex == kRemoteBankIndex && broadcastChannel > 0 &&
+memory.hopCount < kMaxRelayHops`. `OrchDelayLink` gained `serviceRelayPublish()`, an exact structural
+mirror of `serviceOwnPublish()` (own generation-counter tracking, own Hub-fan-out-vs-Client-single-send
+split) - the hop count itself needs no special handling there, it already rode inside the entry the
+existing serialization now carries. New `totalRelaysUi` counter + `relayed N` on the status line, so a
+user can directly confirm relay is actually firing rather than inferring it indirectly.
+
+Verified: `OrchDelayLogicCheck` extended with a `hopCount` round-trip assertion (unlike `seq`, this one
+MUST survive - 173 assertions now, all passing). Backend and UI both build clean; the new "Relay Remote
+Material" toggle renders correctly in the Standalone editor. **The actual multi-hop scenario - a real
+chain where an intermediate relay-enabled instance passes Remote-bank material to a THIRD instance -
+was NOT live-tested this session**: it needs actual MIDI input seeding the first instance in a real
+multi-instance rig, which isn't something this environment can synthesize the way the click-to-wire and
+heartbeat mechanisms could be tested with pure UI automation. The wire-level mechanics it depends on
+(the `"phrase"` message shape, the generation-counter publish pattern, Hub fan-out) are the SAME
+infrastructure already live-confirmed working for captures and click-to-wire earlier this session - real
+confidence, but not a substitute for the user's own real chain test.

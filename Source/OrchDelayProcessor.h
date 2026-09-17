@@ -72,6 +72,7 @@ public:
     int memoryCallbacksForUi() const { return totalMemoryCallbacksUi.load(); }
     int autonomousFiresForUi() const { return totalAutonomousFiresUi.load(); }
     int remoteReceivedForUi() const { return totalRemoteReceivedUi.load(); }
+    int relaysForUi() const { return totalRelaysUi.load(); }   // Docs SS35
 
     // --- Cross-instance phrase broadcast (see OrchDelayLink / Docs SS27) ---
     // `link` itself exposes Hub/Client mode + connected-state for the editor
@@ -101,6 +102,15 @@ public:
     // it is NOT the audio thread). Written non-blocking (try_lock) from the
     // audio thread right after every capture - see scheduleClosedPhrase.
     odly::MemoryEntry snapshotLastCapturedForBroadcast() const;
+
+    // Relay (Docs SS35) - same pattern as capturedGenerationUi/
+    // snapshotLastCapturedForBroadcast above, but a separate channel (see
+    // lastRelayEntry's own doc comment for why not reused) for content this
+    // instance is re-broadcasting because it's PLAYING Remote-bank material,
+    // not because it captured something itself.
+    int getRelayGenerationForUi() const { return relayGenerationUi.load(); }
+    odly::MemoryEntry snapshotLastRelayForBroadcast() const;
+
     // Called from OrchDelayLink's own connection/worker thread (never the
     // audio thread) whenever a phrase arrives from ANOTHER instance matching
     // this instance's own Listen Channel. Queues it (blocking lock is fine
@@ -203,6 +213,7 @@ private:
     std::atomic<float>* linkHubParameter = nullptr;
     std::atomic<float>* broadcastChannelParameter = nullptr;
     std::atomic<float>* listenChannelParameter = nullptr;
+    std::atomic<float>* relayEnabledParameter = nullptr;
     std::atomic<float>* instanceSeedParameter = nullptr;
 
     double sampleRate = 44100.0;
@@ -228,6 +239,7 @@ private:
     std::atomic<float> lastPhraseInterestUi { -1.0f };     // most recent phrase's own 0-100% interest score
     std::atomic<int> totalMemoryCallbacksUi { 0 };   // times an OLDER phrase was echoed instead - Docs SS21
     std::atomic<int> totalAutonomousFiresUi { 0 };   // times the device fired on its own clock - Docs SS24
+    std::atomic<int> totalRelaysUi { 0 };            // times Remote-bank material got re-broadcast onward - Docs SS35
     std::atomic<int> totalRemoteReceivedUi { 0 };    // phrases folded into the Remote bank - Docs SS27
     std::atomic<int> capturedGenerationUi { 0 };     // bumped on every capture - OrchDelayLink polls this
 
@@ -266,6 +278,13 @@ private:
     // workflow this was built for. Remote is populated exclusively by
     // OrchDelayLink folding in phrases received from OTHER instances.
     static constexpr int kMaxPhraseMemorySize = 8;
+    // Relay hop cap (Docs SS35) - the safety net against a miswired channel
+    // cycle circulating content forever. Chosen to comfortably cover any
+    // realistic chain (a full-orchestra rig broken into relay groups would
+    // rarely need more than a handful of real hops) while still being a
+    // small, finite bound - matches broadcastChannel's own 0-8 range, no
+    // deeper significance than that.
+    static constexpr int kMaxRelayHops = 8;
     static constexpr int kCaptureBankChoiceCount = 3;    // A, B, C - Capture Bank's own valid range
     static constexpr int kPhraseMemoryBankCount = 4;     // A, B, C, Remote - Active Bank's own valid range
     static constexpr int kRemoteBankIndex = kPhraseMemoryBankCount - 1;
@@ -291,6 +310,19 @@ private:
     // notices capturedGenerationUi has moved.
     mutable std::mutex lastCapturedMutex;
     odly::MemoryEntry lastCapturedEntry;
+
+    // RELAY OUTGOING (Docs SS35): a SEPARATE channel from the live-capture
+    // one above, not reusing it - a live capture closing and an autonomous-
+    // fire relay firing can both happen within the same block, and sharing
+    // one slot would let one silently overwrite the other before the Link's
+    // next poll ever reads it. checkAutonomousFire writes here (try_lock)
+    // when Relay Remote Material is on AND the phrase it just drew came from
+    // the Remote bank (never for a LOCAL A/B/C draw - that content already
+    // went out once, at its own original capture); OrchDelayLink's worker
+    // thread reads it the same way it reads lastCapturedEntry.
+    mutable std::mutex lastRelayMutex;
+    odly::MemoryEntry lastRelayEntry;
+    std::atomic<int> relayGenerationUi { 0 };
 
     // INCOMING: pushIncomingRemotePhrase() (called from OrchDelayLink's own
     // connection thread, blocking lock fine there) appends here; the top of

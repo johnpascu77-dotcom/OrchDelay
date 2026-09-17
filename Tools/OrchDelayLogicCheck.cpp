@@ -964,6 +964,7 @@ int main()
         odly::MemoryEntry entry;
         entry.phraseStartPpq = 12.5;
         entry.phraseEndPpq = 16.75;
+        entry.hopCount = 3;   // Docs SS35 - relay hop count, unlike seq below, MUST survive the round-trip
 
         odly::HeldNote a; a.channel = 2; a.pitch = 60; a.velocity = 90; a.onsetPpq = 12.5; a.durationPpq = 1.0;
         a.seq = 42; a.phraseId = 7; a.hasNoteOff = true;
@@ -986,6 +987,7 @@ int main()
         check (std::abs (restored.phraseEndPpq - entry.phraseEndPpq) < 1e-9,
               "memoryEntryToVar/FromVar: phraseEndPpq survives the round-trip");
         check (restored.notes.size() == 2, "memoryEntryToVar/FromVar: note count survives the round-trip");
+        check (restored.hopCount == 3, "memoryEntryToVar/FromVar: hopCount survives the round-trip (Docs SS35 - unlike seq, this one MUST travel)");
         check (restored.notes[0].channel == 2 && restored.notes[0].pitch == 60 && restored.notes[0].velocity == 90
               && std::abs (restored.notes[0].onsetPpq - 12.5) < 1e-9 && std::abs (restored.notes[0].durationPpq - 1.0) < 1e-9,
               "memoryEntryToVar/FromVar: first note's pitch/velocity/channel/onset/duration all survive the round-trip");

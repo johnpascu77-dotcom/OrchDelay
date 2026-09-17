@@ -101,6 +101,7 @@ private:
     void run() override;
     void reconcileMode();
     void serviceOwnPublish();
+    void serviceRelayPublish();
     void serviceHeartbeat();
     void teardownServer();
     static juce::File lockFile();
@@ -123,6 +124,7 @@ private:
     std::unique_ptr<ClientConnection> client;
     bool wroteLockFile = false;
     int lastPublishedGeneration = -1;
+    int lastPublishedRelayGeneration = -1;   // serviceRelayPublish's own tracker, Docs SS35
 
     mutable std::mutex connectionsMutex;
     std::vector<std::unique_ptr<HubConnection>> serverConnections;

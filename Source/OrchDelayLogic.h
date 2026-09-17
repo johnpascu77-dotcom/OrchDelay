@@ -423,6 +423,16 @@ namespace odly
         std::vector<HeldNote> notes;
         double phraseStartPpq = 0.0;
         double phraseEndPpq = 0.0;
+
+        // Relay hop count (Docs SS35) - 0 for anything captured first-hand
+        // from this instance's own live MIDI. When an instance re-broadcasts
+        // Remote-bank material it's playing (rather than something it
+        // captured itself), the outgoing copy carries hopCount+1. The
+        // sender-side hop CAP lives in the processor (kMaxRelayHops), not
+        // here - this field only carries the count itself across the wire
+        // and through local storage, so a receiving instance's own decision
+        // to relay further has the real number to check.
+        int hopCount = 0;
     };
 
     struct MemoryCallbackDecision
@@ -492,7 +502,9 @@ namespace odly
     // --- Cross-instance phrase broadcast (see Docs SS27) -----------------------
     // Serializes/deserializes just enough of a MemoryEntry to travel over
     // OrchDelayLink's own JSON IPC messages between plugin instances: notes'
-    // pitch/velocity/channel/onset/duration plus the phrase's own start/end.
+    // pitch/velocity/channel/onset/duration, the phrase's own start/end, and
+    // its hopCount (Docs SS35 - carried through so a relaying instance knows
+    // how many hops this content has already made).
     // Deliberately drops HeldNote::seq/phraseId/hasNoteOff on the way out -
     // seq in particular must NEVER survive the trip, since it was assigned by
     // a DIFFERENT instance's own independent counter and could collide with

@@ -57,6 +57,7 @@ OrchDelayAudioProcessor::OrchDelayAudioProcessor()
     linkHubParameter = parameters.getRawParameterValue ("linkHub");
     broadcastChannelParameter = parameters.getRawParameterValue ("broadcastChannel");
     listenChannelParameter = parameters.getRawParameterValue ("listenChannel");
+    relayEnabledParameter = parameters.getRawParameterValue ("relayEnabled");
     instanceSeedParameter = parameters.getRawParameterValue ("instanceSeed");
 
     link = std::make_unique<OrchDelayLink> (*this);
@@ -402,6 +403,36 @@ void OrchDelayAudioProcessor::checkAutonomousFire (double blockEndPpq,
     totalAutonomousFiresUi.fetch_add (1);
     resolveAndScheduleTransform (autoPhrase, transposeSemitones);
     pendingPhrases.push_back (autoPhrase);
+
+    // Relay (Docs SS35): only when this draw came from the REMOTE bank -
+    // material that arrived from elsewhere, not this instance's own A/B/C
+    // material (which already went out once, at its own original capture -
+    // re-sending it here on every autonomous fire would just be redundant
+    // traffic). Only when Relay Remote Material is on and there's an actual
+    // Broadcast Channel to send it on. Only when the hop cap hasn't been
+    // reached - past that, this instance still plays the material locally
+    // (above), it just stops passing it along any further.
+    const bool relayEnabled = relayEnabledParameter != nullptr && relayEnabledParameter->load() >= 0.5f;
+    const int broadcastChannel = broadcastChannelParameter != nullptr
+        ? juce::jlimit (0, 8, juce::roundToInt (broadcastChannelParameter->load())) : 0;
+
+    if (relayEnabled && activeBankIndex == kRemoteBankIndex && broadcastChannel > 0
+        && memory.hopCount < kMaxRelayHops)
+    {
+        odly::MemoryEntry relayEntry;
+        relayEntry.notes = memory.notes;
+        relayEntry.phraseStartPpq = memory.phraseStartPpq;
+        relayEntry.phraseEndPpq = memory.phraseEndPpq;
+        relayEntry.hopCount = memory.hopCount + 1;
+
+        relayGenerationUi.fetch_add (1);
+        if (lastRelayMutex.try_lock())
+        {
+            lastRelayEntry = relayEntry;
+            lastRelayMutex.unlock();
+        }
+        totalRelaysUi.fetch_add (1);
+    }
 }
 
 void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
@@ -1046,6 +1077,14 @@ odly::MemoryEntry OrchDelayAudioProcessor::snapshotLastCapturedForBroadcast() co
     return lastCapturedEntry;
 }
 
+odly::MemoryEntry OrchDelayAudioProcessor::snapshotLastRelayForBroadcast() const
+{
+    // Same reasoning as snapshotLastCapturedForBroadcast above - separate
+    // mutex/member, see lastRelayEntry's own doc comment in the header.
+    std::lock_guard<std::mutex> lock (lastRelayMutex);
+    return lastRelayEntry;
+}
+
 void OrchDelayAudioProcessor::pushIncomingRemotePhrase (const odly::MemoryEntry& entry)
 {
     // Blocking lock is fine here too - called only from OrchDelayLink's own
@@ -1184,6 +1223,21 @@ juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::cre
         juce::ParameterID { "listenChannel", 1 },
         "Listen Channel",
         0, 8, 0));
+
+    // Off by default (Docs SS35) - when on, this instance re-broadcasts
+    // (on its own Broadcast Channel above) any phrase it fires from its
+    // OWN Remote bank via Autonomous Fire, tagged with an incremented hop
+    // count - not phrases it plays from its own local A/B/C banks, which
+    // already went out once at their original capture. This is what lets a
+    // chain of instances (each with no live MIDI of its own beyond the
+    // first) actually pass material along rather than each one only ever
+    // being able to play back what it directly received. Off by default
+    // because it changes network traffic/behaviour non-trivially - opt in
+    // per instance, only on the ones that should actually forward.
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "relayEnabled", 1 },
+        "Relay Remote Material",
+        false));
 
     // The core "how far in the future" control - the whole point of the
     // device. 0 is a dedicated "pause capturing" state (see Docs SS17) -

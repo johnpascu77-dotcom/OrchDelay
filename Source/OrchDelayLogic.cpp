@@ -677,6 +677,7 @@ namespace odly
         auto* obj = new juce::DynamicObject();
         obj->setProperty ("start", entry.phraseStartPpq);
         obj->setProperty ("end", entry.phraseEndPpq);
+        obj->setProperty ("hop", entry.hopCount);
 
         juce::Array<juce::var> notesArray;
         for (const auto& n : entry.notes)
@@ -699,6 +700,7 @@ namespace odly
         MemoryEntry entry;
         entry.phraseStartPpq = static_cast<double> (value.getProperty ("start", 0.0));
         entry.phraseEndPpq = static_cast<double> (value.getProperty ("end", 0.0));
+        entry.hopCount = static_cast<int> (value.getProperty ("hop", 0));
 
         if (auto* notesArray = value.getProperty ("notes", juce::var()).getArray())
         {

@@ -274,6 +274,10 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     addAndMakeVisible (listenChannelLabel);
     setupSlider (listenChannelSlider);
 
+    relayEnabledButton.setButtonText ("Relay Remote Material");
+    relayEnabledButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
+    addAndMakeVisible (relayEnabledButton);
+
     setupLabel (instanceSeedLabel, "Instance Seed");
     addAndMakeVisible (instanceSeedLabel);
     setupSlider (instanceSeedSlider);
@@ -383,6 +387,7 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     linkHubAttachment = std::make_unique<ButtonAttachment> (state, "linkHub", linkHubButton);
     broadcastChannelAttachment = std::make_unique<SliderAttachment> (state, "broadcastChannel", broadcastChannelSlider);
     listenChannelAttachment = std::make_unique<SliderAttachment> (state, "listenChannel", listenChannelSlider);
+    relayEnabledAttachment = std::make_unique<ButtonAttachment> (state, "relayEnabled", relayEnabledButton);
     instanceSeedAttachment = std::make_unique<SliderAttachment> (state, "instanceSeed", instanceSeedSlider);
 
     // Everything that belongs to the normal parameter view - see this
@@ -409,7 +414,7 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
         &intervalLabel, &intervalSlider, &intervalRandomButton, &intervalRangeSlider,
         &linkHubLabel, &linkHubButton, &clearRemoteButton,
         &broadcastChannelLabel, &broadcastChannelSlider,
-        &listenChannelLabel, &listenChannelSlider,
+        &listenChannelLabel, &listenChannelSlider, &relayEnabledButton,
         &instanceSeedLabel, &instanceSeedSlider, &randomizeSeedButton,
         &instanceLabelLabel, &instanceLabelEditor,
     };
@@ -600,6 +605,9 @@ void OrchDelayAudioProcessorEditor::resized()
 
     listenChannelLabel.setBounds (rightRow (18));
     listenChannelSlider.setBounds (rightRow());
+    rightArea.removeFromTop (5);
+
+    relayEnabledButton.setBounds (rightRow());
     rightArea.removeFromTop (5);
 
     // Status goes directly below whichever column ended up taller (today,
@@ -989,6 +997,7 @@ void OrchDelayAudioProcessorEditor::timerCallback()
                          juce::String (audioProcessor.memoryCallbacksForUi()) + " autofire " +
                          juce::String (audioProcessor.autonomousFiresForUi()) + "\n" +
                          getLinkStatusText() + " remoteIn " +
-                         juce::String (audioProcessor.remoteReceivedForUi()),
+                         juce::String (audioProcessor.remoteReceivedForUi()) + " relayed " +
+                         juce::String (audioProcessor.relaysForUi()),
                          juce::dontSendNotification);
 }
