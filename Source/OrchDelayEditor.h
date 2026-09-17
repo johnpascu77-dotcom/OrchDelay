@@ -64,8 +64,14 @@ private:
     private:
         // Shared by paint() and mouseDown() so hit-testing can never drift
         // out of sync with what's actually drawn - computed fresh each call
-        // (cheap: a handful of divisions), not cached.
-        struct GridGeometry { int leftGutter, topStrip, cell, gridX, gridY, n; };
+        // (cheap: a handful of divisions), not cached. Column width and row
+        // height are deliberately independent (cellW > cellH) - columns
+        // need room to show each destination's own name (not a bare index,
+        // which forces cross-referencing back to the row labels - reported
+        // directly by the user as the actual source of confusion), rows
+        // stay compact since their labels already have the whole left
+        // gutter to themselves.
+        struct GridGeometry { int leftGutter, topStrip, cellW, cellH, gridX, gridY, n; };
         GridGeometry computeGridGeometry() const;
 
         std::vector<Row> rows;

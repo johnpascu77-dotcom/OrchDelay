@@ -2,6 +2,8 @@
 #include "OrchDelayBuildInfo.h"
 #include "OrchDelayLink.h"
 
+#include <algorithm>
+
 namespace
 {
     // House color palette, matching OrchGate's own editor conventions.
@@ -689,12 +691,15 @@ OrchDelayAudioProcessorEditor::ConnectionMatrixView::GridGeometry
 {
     const int n = static_cast<int> (rows.size());
     const int leftGutter = 200;
-    const int topStrip = 26;
+    const int topStrip = 40;   // taller than a bare index needs - now holds a real (short) name
 
     const auto gridArea = getLocalBounds().withTrimmedLeft (leftGutter).withTrimmedTop (topStrip);
-    const int cell = juce::jlimit (22, 56, juce::jmin (gridArea.getWidth() / juce::jmax (1, n),
-                                                       gridArea.getHeight() / juce::jmax (1, n)));
-    return { leftGutter, topStrip, cell, leftGutter, topStrip, n };
+    // Columns need real width to show a destination's own name (see this
+    // struct's own doc comment) - independent of row height, which stays
+    // compact since row labels already have the whole left gutter.
+    const int cellW = juce::jlimit (70, 130, gridArea.getWidth() / juce::jmax (1, n));
+    const int cellH = juce::jlimit (22, 48, gridArea.getHeight() / juce::jmax (1, n));
+    return { leftGutter, topStrip, cellW, cellH, leftGutter, topStrip, n };
 }
 
 void OrchDelayAudioProcessorEditor::ConnectionMatrixView::mouseDown (const juce::MouseEvent& e)
@@ -705,11 +710,11 @@ void OrchDelayAudioProcessorEditor::ConnectionMatrixView::mouseDown (const juce:
     const auto geo = computeGridGeometry();
     const int localX = e.x - geo.gridX;
     const int localY = e.y - geo.gridY;
-    if (localX < 0 || localY < 0 || localX >= geo.n * geo.cell || localY >= geo.n * geo.cell)
+    if (localX < 0 || localY < 0 || localX >= geo.n * geo.cellW || localY >= geo.n * geo.cellH)
         return;   // click landed outside the grid itself (label gutter, legend, etc.)
 
-    const int destColumn = localX / geo.cell;   // column = destination (Listen Channel)
-    const int sourceRow = localY / geo.cell;    // row = source (Broadcast Channel)
+    const int destColumn = localX / geo.cellW;   // column = destination (Listen Channel)
+    const int sourceRow = localY / geo.cellH;    // row = source (Broadcast Channel)
 
     if (sourceRow == destColumn)
         return;   // diagonal - an instance "connecting to itself" means nothing
@@ -735,49 +740,62 @@ void OrchDelayAudioProcessorEditor::ConnectionMatrixView::paint (juce::Graphics&
 
     const auto geo = computeGridGeometry();
     const int n = geo.n;
-    const int cell = geo.cell;
+    const int cellW = geo.cellW;
+    const int cellH = geo.cellH;
     const int gridX = geo.gridX;
     const int gridY = geo.gridY;
     const int leftGutter = geo.leftGutter;
     const int topStrip = geo.topStrip;
 
-    // Row labels (sources) + column index numbers (destinations - see the
-    // legend note below for why a bare index, not the full label, up top).
-    g.setFont (juce::FontOptions (12.0f));
-    for (int i = 0; i < n; ++i)
+    auto displayNameFor = [] (const Row& row)
     {
-        const auto& row = rows[i];
         auto display = row.label.isNotEmpty() ? row.label
                                               : (row.isSelf ? juce::String ("(this instance)")
                                                             : juce::String ("(unlabeled)"));
         if (row.isSelf)
             display += " *";
+        return display;
+    };
 
+    // Row labels (sources).
+    g.setFont (juce::FontOptions (12.0f));
+    for (int i = 0; i < n; ++i)
+    {
+        const auto& row = rows[i];
         g.setColour (row.isSelf ? juce::Colours::white : kMuted);
-        juce::Rectangle<int> labelArea (0, gridY + i * cell, leftGutter - 8, cell);
-        g.drawFittedText (display, labelArea, juce::Justification::centredRight, 1);
+        juce::Rectangle<int> labelArea (0, gridY + i * cellH, leftGutter - 8, cellH);
+        g.drawFittedText (displayNameFor (row), labelArea, juce::Justification::centredRight, 1);
 
         g.setColour (kMuted.withAlpha (0.7f));
-        juce::Rectangle<int> chanArea (gridX + n * cell + 6, gridY + i * cell, 60, cell);
+        juce::Rectangle<int> chanArea (gridX + n * cellW + 6, gridY + i * cellH, 60, cellH);
         g.drawFittedText ("bc" + juce::String (row.broadcastChannel) + " lc" + juce::String (row.listenChannel),
                           chanArea, juce::Justification::centredLeft, 1);
     }
+
+    // Column headers (destinations) - the SAME name as the matching row,
+    // not a bare index: a number forced cross-referencing back to a row
+    // label to find out what it meant, which is exactly what a live user
+    // reported as the actual source of confusion, not the grid concept
+    // itself. Small font + auto-shrink-to-fit (drawFittedText) rather than
+    // manual truncation - simple prefix-truncation collides badly on
+    // similarly-named instances (e.g. an orchestra's own "Violin 1"/
+    // "Violin 2").
+    g.setFont (juce::FontOptions (11.0f));
     for (int j = 0; j < n; ++j)
     {
-        g.setColour (kMuted);
-        g.drawText (juce::String (j + 1), gridX + j * cell, 2, cell, topStrip - 4,
-                   juce::Justification::centred);
+        g.setColour (rows[j].isSelf ? juce::Colours::white : kMuted);
+        juce::Rectangle<int> headerArea (gridX + j * cellW + 2, 2, cellW - 4, topStrip - 4);
+        g.drawFittedText (displayNameFor (rows[j]), headerArea, juce::Justification::centred, 2);
     }
 
     // Grid lines.
     g.setColour (kOutline.withAlpha (0.4f));
-    for (int k = 0; k <= n; ++k)
-    {
-        g.drawLine (static_cast<float> (gridX), static_cast<float> (gridY + k * cell),
-                   static_cast<float> (gridX + n * cell), static_cast<float> (gridY + k * cell));
-        g.drawLine (static_cast<float> (gridX + k * cell), static_cast<float> (gridY),
-                   static_cast<float> (gridX + k * cell), static_cast<float> (gridY + n * cell));
-    }
+    for (int row = 0; row <= n; ++row)
+        g.drawLine (static_cast<float> (gridX), static_cast<float> (gridY + row * cellH),
+                   static_cast<float> (gridX + n * cellW), static_cast<float> (gridY + row * cellH));
+    for (int col = 0; col <= n; ++col)
+        g.drawLine (static_cast<float> (gridX + col * cellW), static_cast<float> (gridY),
+                   static_cast<float> (gridX + col * cellW), static_cast<float> (gridY + n * cellH));
 
     // Cells: (i, j) lit when row i's Broadcast Channel feeds row j's Listen
     // Channel - i.e. row i sends TO column j. A column fed by more than one
@@ -794,7 +812,7 @@ void OrchDelayAudioProcessorEditor::ConnectionMatrixView::paint (juce::Graphics&
 
         for (int i = 0; i < n; ++i)
         {
-            juce::Rectangle<int> cellArea (gridX + j * cell + 2, gridY + i * cell + 2, cell - 4, cell - 4);
+            juce::Rectangle<int> cellArea (gridX + j * cellW + 2, gridY + i * cellH + 2, cellW - 4, cellH - 4);
 
             if (i == j)
             {
@@ -866,6 +884,25 @@ void OrchDelayAudioProcessorEditor::timerCallback()
             row.connectionId = status.connectionId;
             rows.push_back (row);
         }
+
+        // Row/column order was previously whatever std::map<HubConnection*,...>
+        // happened to iterate in - the raw pointer value of an internal
+        // connection object, meaningless and liable to change between
+        // sessions. Sorted here instead by Broadcast Channel (ascending,
+        // non-broadcasting instances - channel 0 - pushed to the end since
+        // they can never be a source anyway), tie-broken by label. Neither
+        // is the same as the DAW's own track order (this plugin has no way
+        // to know that), but both ARE something the user sets deliberately
+        // and can rely on staying put - a real, predictable position to
+        // build a mental map from, instead of an implementation accident.
+        std::stable_sort (rows.begin(), rows.end(), [] (const ConnectionMatrixView::Row& a, const ConnectionMatrixView::Row& b)
+        {
+            const int aKey = a.broadcastChannel > 0 ? a.broadcastChannel : 1000;
+            const int bKey = b.broadcastChannel > 0 ? b.broadcastChannel : 1000;
+            if (aKey != bKey)
+                return aKey < bKey;
+            return a.label.compareIgnoreCase (b.label) < 0;
+        });
 
         matrixView.setRows (std::move (rows));
         return;   // nothing else on screen to refresh while the matrix is up

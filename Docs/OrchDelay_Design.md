@@ -1506,6 +1506,53 @@ on the test machine (an intermittently-reappearing Visual Studio Installer windo
 foreground focus from the automation script, regardless of window z-order fixes). Given the time already
 spent fighting that environment issue, stopped the live attempt and did a careful code-level re-read of
 the complete message path instead (summarized above) rather than continue - found no correctness issues,
-but this is self-review, not a substitute for an actual round-trip. **Needs the user's own real multi-
-instance test** (Bitwig, or two Standalone instances on a machine without this interference) before this
-can be called genuinely proven, same as the Connection Matrix's own heartbeat mechanism in SS31.
+but this is self-review, not a substitute for an actual round-trip.
+
+**Update, same day, after the user's machine restart fixed the interference (root cause traced to a
+broken Visual Studio Clang/LLVM component install, unrelated to this codebase)**: re-ran the 2-Standalone-
+instance test cleanly. **Genuinely confirmed both directions**: clicking a cell on one instance's own
+Connection Matrix (the hub) set a SEPARATE instance's own Listen Channel parameter over the real loopback
+connection - verified by screenshotting the REMOTE instance's own window directly (not just trusting the
+hub's own heartbeat-derived matrix display) and watching its Listen Channel slider physically move to the
+clicked value, then back to 0 on a second click (disconnect). This is the real thing, not self-review -
+click-to-wire's cross-instance path is now genuinely proven working.
+
+## SS34. Connection Matrix ordering + real column names - a live user got lost in the grid
+
+Direct follow-up, same session: after SS33 shipped, the user set up a real 4-instance string-quartet
+cascade (Violin 1/2, Viola, Violoncello) by hand and opened the matrix to see it - and could not read it
+at all: "I wouldn't have known how to set them up from this view... The simple fact that Violin 1 (track
+1) has the lit square on the 4th column makes no sense to me." Walking through the SPECIFIC screenshot
+with them (translating grid position back into instance names by hand) resolved that one case, but they
+came back with the real underlying complaint: the row/column POSITION itself carried no meaning they could
+predict - it wasn't the DAW's own track order, and turned out not to be stable at all.
+
+**Root cause, found by reading the actual code rather than guessing**: `RemoteInstanceStatus` entries were
+collected from `std::map<HubConnection*, RemoteInstanceStatus>` (Docs SS31/33's own registry) via
+`getRemoteStatusesForUi()`, and `std::map` iterates in KEY order - the key here being the raw
+`HubConnection*` pointer value. Row/column position in the matrix was therefore, literally, sorted by an
+internal heap pointer's own numeric value: meaningless to the user, and not even guaranteed stable across
+a hub restart (a fresh connection gets a fresh pointer). Compounding it, column headers showed a bare
+index number (1,2,3,4) rather than a name, forcing the user to cross-reference a number back to a row
+label just to find out what a column even was - flagged as a likely problem in SS33's own commentary, now
+confirmed by a live user actually hitting it.
+
+**Fix, two parts**:
+1. **Stable, meaningful order**: `OrchDelayAudioProcessorEditor::timerCallback` now `std::stable_sort`s
+   the row list by Broadcast Channel (ascending; a non-broadcasting instance, channel 0, sorts to the end
+   since it can never be a source), tie-broken alphabetically by label. Neither IS the DAW's own track
+   order (this plugin has no way to query that over the Link protocol, or at all), but both are something
+   the user sets deliberately and can rely on staying put between sessions - a real, learnable position
+   instead of an implementation accident.
+2. **Real column names**: `ConnectionMatrixView`'s column headers now draw each column's own instance
+   label (auto-shrunk to fit via `drawFittedText`, not manually truncated - naive prefix-truncation
+   collides badly on an orchestra's own similarly-named instances, e.g. "Violin 1"/"Violin 2" would both
+   truncate to "Viol"). This needed real width, not the old single-digit-wide column, so
+   `ConnectionMatrixView::GridGeometry` split into independent `cellW`/`cellH` (columns now up to 130px,
+   rows stay compact at up to 48px) - `paint()` and `mouseDown()`'s hit-testing were both updated together
+   off the same `computeGridGeometry()` call, so they can't drift apart.
+
+Rebuilt+reinstalled. Verified visually via the same live 2-instance Standalone setup used for SS33's own
+click-to-wire confirmation above: with Alto (bc2) and Beta (bc1) both connected, the matrix correctly
+showed "Beta" before "Alto" (ascending broadcast channel) with real names on both axes, no bare numbers
+anywhere. Build ~2026-09-17.
