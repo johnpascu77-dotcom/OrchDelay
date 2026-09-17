@@ -110,6 +110,18 @@ public:
     // numbering).
     void pushIncomingRemotePhrase (const odly::MemoryEntry& entry);
 
+    // Free-text identity shown in the Connection Matrix (Docs SS31) instead
+    // of a bare Instance Seed number - not an APVTS parameter (no clean
+    // free-text parameter shape, same reasoning as randomizeInstanceSeed
+    // below), so it needs its own small thread-safe storage: read by
+    // OrchDelayLink's own worker thread (building each heartbeat, blocking
+    // lock fine there) and written by the editor (message thread) whenever
+    // the user types. Persisted as a plain XML attribute alongside the APVTS
+    // state in get/setStateInformation, same trick used elsewhere in JUCE
+    // for a value that doesn't fit the parameter system.
+    juce::String getInstanceLabelForUi() const;
+    void setInstanceLabel (const juce::String& label);
+
     // "Randomize" button target - writes through the normal parameter path
     // (undoable, saved in state), never a bare non-parameter side value.
     void randomizeInstanceSeed();
@@ -263,6 +275,12 @@ private:
     // reassigning fresh local `seq` values first.
     std::mutex remoteInboxMutex;
     std::vector<odly::MemoryEntry> remoteInboxPending;
+
+    // Connection Matrix identity (Docs SS31) - see getInstanceLabelForUi's
+    // own doc comment above for why this needs its own mutex rather than
+    // living as a plain member.
+    mutable std::mutex instanceLabelMutex;
+    juce::String instanceLabel;
 
     std::unique_ptr<OrchDelayLink> link;
 

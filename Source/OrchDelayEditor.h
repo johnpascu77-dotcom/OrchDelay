@@ -19,6 +19,34 @@ public:
 private:
     void timerCallback() override;
     juce::String getLinkStatusText() const;
+    void setShowingMatrix (bool shouldShow);
+
+    // Connection Matrix (Docs SS31): read-only "who feeds whom" visualization,
+    // built from each connected instance's own Broadcast/Listen Channel
+    // rather than a raw channel-number grid - a cell lights up where one
+    // row's Broadcast Channel matches another row's Listen Channel, which
+    // reads directly as "row feeds column" using real instance labels. Only
+    // ever meaningful on the hub itself (only the hub ever hears from other
+    // clients at all - see OrchDelayLink::getRemoteStatusesForUi's own doc
+    // comment), so the tab button that reveals it is only shown when
+    // Broadcast Hub is checked.
+    class ConnectionMatrixView : public juce::Component
+    {
+    public:
+        struct Row
+        {
+            juce::String label;
+            int broadcastChannel = 0;
+            int listenChannel = 0;
+            bool isSelf = false;
+        };
+
+        void setRows (std::vector<Row> newRows);
+        void paint (juce::Graphics&) override;
+
+    private:
+        std::vector<Row> rows;
+    };
 
     OrchDelayAudioProcessor& audioProcessor;
 
@@ -101,6 +129,28 @@ private:
     juce::Label instanceSeedLabel;
     juce::Slider instanceSeedSlider;
     juce::TextButton randomizeSeedButton;
+
+    // Free-text identity (Docs SS31) - shown in the Connection Matrix instead
+    // of a bare Instance Seed number. Not an APVTS parameter, see
+    // OrchDelayProcessor::getInstanceLabelForUi's own doc comment - plain
+    // juce::TextEditor with no ButtonAttachment/SliderAttachment, same
+    // pattern OrchCapture's own free-text fields (markers/tempo/score order)
+    // already use in this ecosystem.
+    juce::Label instanceLabelLabel;
+    juce::TextEditor instanceLabelEditor;
+
+    // Only shown/enabled when Broadcast Hub is checked (see linkHubButton) -
+    // a non-hub instance never has any remote status data to show.
+    juce::TextButton matrixTabButton;
+    ConnectionMatrixView matrixView;
+    bool showingMatrix = false;
+
+    // Every control that belongs to the normal parameter view (everything
+    // except title/subtitle/build/status and the matrix machinery itself) -
+    // toggled as a group by setShowingMatrix rather than tracked one at a
+    // time, so a new control added later only needs one push_back, not a
+    // second visibility-toggle site to remember.
+    std::vector<juce::Component*> mainPanelComponents;
 
     juce::Label statusLabel;   // transport-present / pending-phrase-count, refreshed via Timer
 

@@ -252,6 +252,36 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     randomizeSeedButton.onClick = [this] { audioProcessor.randomizeInstanceSeed(); };
     addAndMakeVisible (randomizeSeedButton);
 
+    // Free-text identity (Docs SS31) - not an APVTS parameter, see
+    // OrchDelayProcessor::getInstanceLabelForUi's own doc comment. Written
+    // through on focus loss / Return, matching OrchCapture's own free-text
+    // field convention rather than on every keystroke.
+    setupLabel (instanceLabelLabel, "Instance Label");
+    addAndMakeVisible (instanceLabelLabel);
+    instanceLabelEditor.setText (audioProcessor.getInstanceLabelForUi(), juce::dontSendNotification);
+    instanceLabelEditor.setColour (juce::TextEditor::backgroundColourId, kBoxBackground);
+    instanceLabelEditor.setColour (juce::TextEditor::textColourId, juce::Colours::white);
+    instanceLabelEditor.setColour (juce::TextEditor::outlineColourId, kOutline);
+    instanceLabelEditor.setTextToShowWhenEmpty ("e.g. Violins", kMuted);
+    auto commitLabel = [this] { audioProcessor.setInstanceLabel (instanceLabelEditor.getText()); };
+    instanceLabelEditor.onFocusLost = commitLabel;
+    instanceLabelEditor.onReturnKey = commitLabel;
+    addAndMakeVisible (instanceLabelEditor);
+
+    // Connection Matrix tab (Docs SS31) - see this file's own header comment
+    // on ConnectionMatrixView for why it's only shown when Hub is checked.
+    // Visibility/enablement is driven from timerCallback, not here - it
+    // tracks linkHubButton's live toggle state, which can change any time
+    // after construction.
+    matrixTabButton.setButtonText ("Connection Matrix");
+    matrixTabButton.setColour (juce::TextButton::buttonColourId, kBoxBackground);
+    matrixTabButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    matrixTabButton.setClickingTogglesState (true);
+    matrixTabButton.onClick = [this] { setShowingMatrix (matrixTabButton.getToggleState()); };
+    addChildComponent (matrixTabButton);   // starts hidden - see timerCallback
+
+    addChildComponent (matrixView);   // starts hidden - shown via setShowingMatrix
+
     statusLabel.setJustificationType (juce::Justification::centred);
     statusLabel.setColour (juce::Label::textColourId, kMuted);
     statusLabel.setFont (juce::FontOptions (13.0f));
@@ -288,6 +318,35 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     broadcastChannelAttachment = std::make_unique<SliderAttachment> (state, "broadcastChannel", broadcastChannelSlider);
     listenChannelAttachment = std::make_unique<SliderAttachment> (state, "listenChannel", listenChannelSlider);
     instanceSeedAttachment = std::make_unique<SliderAttachment> (state, "instanceSeed", instanceSeedSlider);
+
+    // Everything that belongs to the normal parameter view - see this
+    // vector's own doc comment in the header. Deliberately listed once here
+    // rather than a push_back scattered after each addAndMakeVisible above,
+    // so this list is auditable in one place against what's actually shown.
+    mainPanelComponents = {
+        &bypassButton, &captureModeLabel, &captureModeBox,
+        &holdBarsLabel, &holdBarsSlider, &holdBarsRandomButton,
+        &overlapModeLabel, &overlapModeBox,
+        &phraseGapLabel, &phraseGapSlider,
+        &minimumInterestLabel, &minimumInterestSlider,
+        &callbackProbabilityLabel, &callbackProbabilitySlider,
+        &autonomousFireLabel, &autonomousFireSlider,
+        &captureBankLabel, &captureBankBox, &clearBankButton,
+        &activeBankLabel, &activeBankBox,
+        &recencyBiasLabel, &recencyBiasSlider,
+        &restlessnessLabel, &restlessnessSlider, &contentAwareWeightingButton,
+        &transformLabel, &transformBox,
+        &transposeLabel, &transposeSlider, &transposeRandomButton,
+        &rotationLabel, &rotationSlider, &rotationRandomButton,
+        &lengthLabel, &lengthSlider, &lengthRandomButton,
+        &stretchLabel, &stretchSlider, &stretchRandomButton, &stretchQuantizedButton,
+        &intervalLabel, &intervalSlider, &intervalRandomButton,
+        &linkHubLabel, &linkHubButton, &clearRemoteButton,
+        &broadcastChannelLabel, &broadcastChannelSlider,
+        &listenChannelLabel, &listenChannelSlider,
+        &instanceSeedLabel, &instanceSeedSlider, &randomizeSeedButton,
+        &instanceLabelLabel, &instanceLabelEditor,
+    };
 
     startTimerHz (4);
     timerCallback();
@@ -391,6 +450,10 @@ void OrchDelayAudioProcessorEditor::resized()
     instanceSeedSlider.setBounds (seedRow);
     leftArea.removeFromTop (8);
 
+    instanceLabelLabel.setBounds (leftRow (18));
+    instanceLabelEditor.setBounds (leftRow());
+    leftArea.removeFromTop (8);
+
     // --- Right column: transform -----------------------------------------
     restlessnessLabel.setBounds (rightRow (18));
     auto restlessnessRow = rightRow();
@@ -456,6 +519,12 @@ void OrchDelayAudioProcessorEditor::resized()
     listenChannelSlider.setBounds (rightRow());
     rightArea.removeFromTop (8);
 
+    // Only actually placed where it'll be seen/clicked when Broadcast Hub is
+    // checked (timerCallback controls visibility) - laid out unconditionally
+    // here regardless, harmless when hidden.
+    matrixTabButton.setBounds (rightRow());
+    rightArea.removeFromTop (8);
+
     // Status goes directly below whichever column ended up taller (today,
     // the left one) - never pinned to the window's own declared bottom edge,
     // see this function's own comment above `fullWidthArea` for why.
@@ -463,6 +532,132 @@ void OrchDelayAudioProcessorEditor::resized()
     juce::Rectangle<int> statusArea (fullWidthArea.getX(), contentBottom + 8,
                                      fullWidthArea.getWidth(), 82);
     statusLabel.setBounds (statusArea);
+
+    // Connection Matrix (Docs SS31) fills the exact same real estate the two
+    // columns above occupy, so toggling it never resizes the window.
+    matrixView.setBounds (fullWidthArea.getX(), fullWidthArea.getY(),
+                          fullWidthArea.getWidth(), contentBottom - fullWidthArea.getY());
+}
+
+void OrchDelayAudioProcessorEditor::setShowingMatrix (bool shouldShow)
+{
+    showingMatrix = shouldShow;
+    matrixTabButton.setToggleState (shouldShow, juce::dontSendNotification);
+
+    for (auto* c : mainPanelComponents)
+        c->setVisible (! shouldShow);
+
+    matrixView.setVisible (shouldShow);
+
+    if (shouldShow)
+        timerCallback();   // paint fresh data immediately, don't wait for the next tick
+}
+
+void OrchDelayAudioProcessorEditor::ConnectionMatrixView::setRows (std::vector<Row> newRows)
+{
+    rows = std::move (newRows);
+    repaint();
+}
+
+void OrchDelayAudioProcessorEditor::ConnectionMatrixView::paint (juce::Graphics& g)
+{
+    g.fillAll (kBackground);
+
+    if (rows.empty())
+    {
+        g.setColour (kMuted);
+        g.setFont (juce::FontOptions (14.0f));
+        g.drawFittedText ("No connections yet - waiting for other instances to connect.",
+                          getLocalBounds().reduced (16), juce::Justification::centred, 2);
+        return;
+    }
+
+    const int n = static_cast<int> (rows.size());
+    const int leftGutter = 200;
+    const int topStrip = 26;
+
+    const auto gridArea = getLocalBounds().withTrimmedLeft (leftGutter).withTrimmedTop (topStrip);
+    const int cell = juce::jlimit (22, 56, juce::jmin (gridArea.getWidth() / juce::jmax (1, n),
+                                                       gridArea.getHeight() / juce::jmax (1, n)));
+    const int gridX = leftGutter;
+    const int gridY = topStrip;
+
+    // Row labels (sources) + column index numbers (destinations - see the
+    // legend note below for why a bare index, not the full label, up top).
+    g.setFont (juce::FontOptions (12.0f));
+    for (int i = 0; i < n; ++i)
+    {
+        const auto& row = rows[i];
+        auto display = row.label.isNotEmpty() ? row.label
+                                              : (row.isSelf ? juce::String ("(this instance)")
+                                                            : juce::String ("(unlabeled)"));
+        if (row.isSelf)
+            display += " *";
+
+        g.setColour (row.isSelf ? juce::Colours::white : kMuted);
+        juce::Rectangle<int> labelArea (0, gridY + i * cell, leftGutter - 8, cell);
+        g.drawFittedText (display, labelArea, juce::Justification::centredRight, 1);
+
+        g.setColour (kMuted.withAlpha (0.7f));
+        juce::Rectangle<int> chanArea (gridX + n * cell + 6, gridY + i * cell, 60, cell);
+        g.drawFittedText ("bc" + juce::String (row.broadcastChannel) + " lc" + juce::String (row.listenChannel),
+                          chanArea, juce::Justification::centredLeft, 1);
+    }
+    for (int j = 0; j < n; ++j)
+    {
+        g.setColour (kMuted);
+        g.drawText (juce::String (j + 1), gridX + j * cell, 2, cell, topStrip - 4,
+                   juce::Justification::centred);
+    }
+
+    // Grid lines.
+    g.setColour (kOutline.withAlpha (0.4f));
+    for (int k = 0; k <= n; ++k)
+    {
+        g.drawLine (static_cast<float> (gridX), static_cast<float> (gridY + k * cell),
+                   static_cast<float> (gridX + n * cell), static_cast<float> (gridY + k * cell));
+        g.drawLine (static_cast<float> (gridX + k * cell), static_cast<float> (gridY),
+                   static_cast<float> (gridX + k * cell), static_cast<float> (gridY + n * cell));
+    }
+
+    // Cells: (i, j) lit when row i's Broadcast Channel feeds row j's Listen
+    // Channel - i.e. row i sends TO column j. A column fed by more than one
+    // distinct source is a real configuration hazard (two generators
+    // reusing the same channel number, both landing on one follower) -
+    // flagged in a warning colour rather than silently drawn the same as a
+    // clean single-source connection.
+    for (int j = 0; j < n; ++j)
+    {
+        int sourceCount = 0;
+        for (int i = 0; i < n; ++i)
+            if (i != j && rows[i].broadcastChannel > 0 && rows[i].broadcastChannel == rows[j].listenChannel)
+                ++sourceCount;
+
+        for (int i = 0; i < n; ++i)
+        {
+            juce::Rectangle<int> cellArea (gridX + j * cell + 2, gridY + i * cell + 2, cell - 4, cell - 4);
+
+            if (i == j)
+            {
+                g.setColour (kOutline.withAlpha (0.15f));
+                g.fillRect (cellArea);
+                continue;
+            }
+
+            const bool lit = rows[i].broadcastChannel > 0 && rows[i].broadcastChannel == rows[j].listenChannel;
+            if (! lit)
+                continue;
+
+            g.setColour (sourceCount > 1 ? juce::Colour::fromRGB (235, 140, 60) : kThumb);
+            g.fillRoundedRectangle (cellArea.toFloat(), 3.0f);
+        }
+    }
+
+    g.setColour (kMuted.withAlpha (0.7f));
+    g.setFont (juce::FontOptions (11.0f));
+    g.drawText ("Rows = source (Broadcast Channel)  \xc2\xb7  Columns = destination (Listen Channel), numbered "
+               "top to bottom same order as rows  \xc2\xb7  orange = two sources sharing one channel",
+               getLocalBounds().removeFromBottom (16), juce::Justification::centred);
 }
 
 juce::String OrchDelayAudioProcessorEditor::getLinkStatusText() const
@@ -483,6 +678,39 @@ juce::String OrchDelayAudioProcessorEditor::getLinkStatusText() const
 
 void OrchDelayAudioProcessorEditor::timerCallback()
 {
+    // Connection Matrix (Docs SS31) only ever has real data on the hub
+    // itself - hide the tab (and force back to the normal view if Hub gets
+    // unchecked while the matrix happens to be showing) whenever this
+    // instance isn't currently the hub.
+    const bool isHub = linkHubButton.getToggleState();
+    matrixTabButton.setVisible (isHub);
+    if (! isHub && showingMatrix)
+        setShowingMatrix (false);
+
+    if (showingMatrix)
+    {
+        std::vector<ConnectionMatrixView::Row> rows;
+
+        ConnectionMatrixView::Row self;
+        self.label = audioProcessor.getInstanceLabelForUi();
+        self.broadcastChannel = static_cast<int> (broadcastChannelSlider.getValue());
+        self.listenChannel = static_cast<int> (listenChannelSlider.getValue());
+        self.isSelf = true;
+        rows.push_back (self);
+
+        for (const auto& status : audioProcessor.getLink().getRemoteStatusesForUi())
+        {
+            ConnectionMatrixView::Row row;
+            row.label = status.label;
+            row.broadcastChannel = status.broadcastChannel;
+            row.listenChannel = status.listenChannel;
+            rows.push_back (row);
+        }
+
+        matrixView.setRows (std::move (rows));
+        return;   // nothing else on screen to refresh while the matrix is up
+    }
+
     const bool haveTransport = audioProcessor.hasTransportForUi();
     const int pending = audioProcessor.pendingPhraseCountForUi();
 

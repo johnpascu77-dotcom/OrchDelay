@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -45,6 +46,22 @@ public:
     Mode getModeForUi() const { return mode.load(); }
     bool isConnectedForUi() const { return clientConnected.load(); }
 
+    // Connection Matrix (Docs SS31): one entry per OTHER instance currently
+    // known to the hub, built from that instance's own periodic heartbeat
+    // (see serviceHeartbeat's own doc comment below) - NOT from the phrase-
+    // broadcast traffic, which never carries identity. Only meaningful when
+    // THIS instance is itself the hub (empty otherwise, since only the hub
+    // ever receives client connections at all) - the editor only shows the
+    // matrix when Broadcast Hub is checked, matching that constraint.
+    struct RemoteInstanceStatus
+    {
+        juce::String label;
+        int broadcastChannel = 0;
+        int listenChannel = 0;
+        juce::int64 lastSeenMs = 0;
+    };
+    std::vector<RemoteInstanceStatus> getRemoteStatusesForUi() const;
+
 private:
     class ClientConnection;
     class HubConnection;
@@ -53,6 +70,7 @@ private:
     void run() override;
     void reconcileMode();
     void serviceOwnPublish();
+    void serviceHeartbeat();
     void teardownServer();
     static juce::File lockFile();
 
@@ -75,8 +93,13 @@ private:
     bool wroteLockFile = false;
     int lastPublishedGeneration = -1;
 
-    std::mutex connectionsMutex;
+    mutable std::mutex connectionsMutex;
     std::vector<std::unique_ptr<HubConnection>> serverConnections;
+
+    // Guarded by connectionsMutex too (always touched alongside
+    // serverConnections - registered/erased at the same points) rather than
+    // its own mutex, to avoid any lock-ordering question between the two.
+    std::map<HubConnection*, RemoteInstanceStatus> remoteStatuses;
 
     JUCE_DECLARE_WEAK_REFERENCEABLE (OrchDelayLink)
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (OrchDelayLink)

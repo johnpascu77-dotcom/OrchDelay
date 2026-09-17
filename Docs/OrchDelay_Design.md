@@ -1246,6 +1246,80 @@ experimental (hence motive-killer)," so this stays as documented, known behavior
 change: Wait prevents a NEW phrase from starting over an OLD one's still-sounding notes; it was never a
 promise that any one phrase's own material stays monophonic against itself.
 
+## SS31. Connection Matrix - a live "who feeds whom" view for a multi-instance rig
+
+Grew out of debugging a 4-instance cascade setup live with the user (§ before this): the real cause of one
+link going silent turned out to be that broadcasting only ever fires from genuinely NEW live-captured
+closures (`scheduleClosedPhrase`), never from Autonomous-Fire replays or Remote-bank material - so an
+intermediate instance with no live MIDI of its own has nothing to relay onward, even with perfectly correct
+channel wiring. Once that was resolved, the user asked (purely conceptually, comparing to AUM's routing
+matrix) for a way to see the whole rig's wiring at a glance rather than reading each instance's own
+Broadcast/Listen Channel sliders one at a time - "in a bigger orchestral rig, it is very easy to lose
+track of who is doing what." Confirmed the real topology is genuinely many-to-many at the RIG level
+(several "generator" instances, each fanning out to several "follower" instances) even though each
+individual instance only ever has ONE Broadcast Channel and ONE Listen Channel - many-to-many falls out
+of several followers independently choosing the same generator's channel number, no new routing
+capability needed, just visibility into what's already there.
+
+**Design choice: Instance x Instance, not Channel x Channel.** Rows = every known instance as a potential
+source (using its OWN Broadcast Channel), columns = the same instances as potential destinations (using
+their OWN Listen Channel), a cell lights up where they match. This reads directly as "row feeds column"
+using real instance names rather than bare channel numbers, and it surfaces real configuration hazards for
+free: an all-dark row (broadcasting to nobody), an all-dark column (a starved follower), or - flagged in a
+distinct warning colour - a column lit by MORE than one row, meaning two different generators are
+accidentally reusing the same channel number and a follower is silently receiving interleaved material
+from both.
+
+**Read-only for v1, not click-to-wire.** The user's own framing ("make all the connections from one
+matrix") pointed at AUM's fully interactive matrix, but that's a materially bigger feature - it means the
+hub reaching into ANOTHER instance's own parameters over the network, which is a genuinely new trust
+boundary nothing in this plugin family has done before (Link has only ever moved musical content one
+direction). Scoped this session to the read-only view; click-to-wire is a real, deliberate follow-up, not
+a defaults-to-declined idea - see the "not yet built" list below.
+
+**New wire protocol - a heartbeat, separate from phrase messages**: `OrchDelayLink` messages now carry a
+`t` field (`"phrase"`, existing; `"heartbeat"`, new) so the two never get parsed as each other.
+`serviceHeartbeat()` (client role only - a hub never needs to hear itself, its own editor reads its own
+state directly) sends `{t:"heartbeat", label, bc, lc}` to the hub every poll (300ms), regardless of
+whether Broadcast/Listen Channel are actually set - an unconfigured instance should still be VISIBLE in
+the matrix, not silently absent, so a forgotten instance is obvious rather than invisible. On the hub side,
+`onHubClientMessage` branches on `t`: heartbeats are consumed into a new `std::map<HubConnection*,
+RemoteInstanceStatus> remoteStatuses` (guarded by the existing `connectionsMutex`, erased alongside its
+matching `serverConnections` entry in `onHubClientGone` - same connection lifecycle, one less thing to
+keep in sync separately) and never fanned out (no other client has any use for another's heartbeat, only
+the hub's own matrix does); phrase messages are unaffected, still fanned out exactly as before. New public
+`OrchDelayLink::getRemoteStatusesForUi()` returns a thread-safe snapshot for the editor's Timer to poll.
+
+**Instance Label**: free-text identity (e.g. "Violins"), shown in the matrix instead of a bare Instance
+Seed number. Not an APVTS parameter - no clean free-text parameter shape exists in APVTS, same reasoning
+as `randomizeInstanceSeed`'s own non-parameter Randomize button - so it's a plain `juce::String` on the
+processor, guarded by its own small mutex (read every heartbeat by the Link's worker thread, written by
+the editor whenever the user types), persisted as a plain XML attribute alongside the APVTS state in
+get/setStateInformation (a standard JUCE trick for a value that doesn't fit the parameter system). Editor
+uses a plain `juce::TextEditor` (no attachment), committing on focus-loss/Return, matching OrchCapture's
+own free-text field convention (markers/tempo/score order) rather than firing on every keystroke.
+
+**Editor**: a "Connection Matrix" button appears directly below Listen Channel, but ONLY when Broadcast
+Hub is checked (a non-hub instance never receives client connections at all, so it would only ever show
+its own single row - matches the user's own "gets active if the Hub is checked" framing). Toggling it
+swaps the ENTIRE normal parameter panel for a new `ConnectionMatrixView` component filling the exact same
+window real estate (no resize) - implemented by grouping every existing control into one
+`mainPanelComponents` vector and toggling visibility on the whole group at once, rather than restructuring
+the layout into a real tabbed container. If Hub gets unchecked while the matrix happens to be showing,
+`timerCallback` forces it back to the normal view automatically.
+
+Built+installed, verified visually via Standalone (single-instance self-row renders correctly: live label/
+channel values, legend, no-crash empty-remote-list case). **The actual cross-instance heartbeat round-trip
+is NOT yet live-tested** - needs a real multi-instance rig (or two Standalone instances on the same
+machine) to confirm a second instance's heartbeat actually arrives at the hub and renders as a second row.
+
+**Not yet built / deliberately deferred**:
+- Click-to-wire (setting a follower's Listen Channel by clicking a matrix cell) - the bigger, riskier
+  feature discussed above; build only with a deliberate design pass on the remote-control trust boundary.
+- Any hop-count/origin-tag protection for a genuine relay/re-broadcast feature (a SEPARATE idea raised in
+  the same conversation, before the matrix - re-broadcasting Remote-drawn/Autonomous-Fire material outward,
+  not just first-hand captures) - not built this session, no code changes for it.
+
 ## SS30. Wait busy-gating was instant-by-instant, not phrase-envelope-aware - genuine cross-phrase overlap
 
 Follow-up to SS29, same session: the user asked, with a concrete example, how a deliberately simple

@@ -25,6 +25,19 @@ namespace
         }
         return entryVar;
     }
+
+    // Connection Matrix identity ping (Docs SS31) - deliberately a separate
+    // message shape from phraseMessageFrom's own, never carrying note data,
+    // so it stays tiny even sent every poll interval.
+    juce::var heartbeatMessageFrom (const juce::String& label, int broadcastChannel, int listenChannel)
+    {
+        auto* obj = new juce::DynamicObject();
+        obj->setProperty ("t", "heartbeat");
+        obj->setProperty ("label", label);
+        obj->setProperty ("bc", broadcastChannel);
+        obj->setProperty ("lc", listenChannel);
+        return juce::var (obj);
+    }
 }
 
 // ===================== connection / server objects =====================
@@ -41,16 +54,22 @@ public:
     void connectionMade() override { owner.clientConnected.store (true); }
     void connectionLost() override { owner.clientConnected.store (false); }
 
-    // A message here can only be a "phrase" relayed by the hub, originating
+    // A message here is normally a "phrase" relayed by the hub, originating
     // from ANOTHER client - the hub never relays a client's own message back
     // to that same client (see OrchDelayLink.h's own doc comment), so there
-    // is no self-hear case to guard against here.
+    // is no self-hear case to guard against here. Heartbeats (Docs SS31) are
+    // never fanned out to other clients (only the hub itself consumes them,
+    // to build the Connection Matrix), but check the type explicitly anyway
+    // rather than assume - cheap, and correct if that ever changes.
     void messageReceived (const juce::MemoryBlock& message) override
     {
         const auto json = juce::String::fromUTF8 (static_cast<const char*> (message.getData()),
                                                   static_cast<int> (message.getSize()));
         juce::var parsed;
         if (! juce::JSON::parse (json, parsed).wasOk() || ! parsed.isObject())
+            return;
+
+        if (parsed.getProperty ("t", juce::var()).toString() != "phrase")
             return;
 
         const int listenChannel = owner.processor.getListenChannelForUi();
@@ -178,6 +197,7 @@ void OrchDelayLink::run()
         }
 
         serviceOwnPublish();
+        serviceHeartbeat();
 
         wait (kPollMs);
     }
@@ -269,6 +289,24 @@ void OrchDelayLink::serviceOwnPublish()
     }
 }
 
+// Connection Matrix identity ping (Docs SS31) - client role only. The hub
+// never needs to send ITSELF a heartbeat over the network: its own editor
+// reads its own label/channels directly (see getRemoteStatusesForUi's own
+// doc comment). Sent every poll regardless of channel settings, including
+// 0/0 (off) - the matrix is meant to show every instance in the rig, wired
+// or not, so a forgotten-to-configure instance is visible rather than
+// silently absent.
+void OrchDelayLink::serviceHeartbeat()
+{
+    if (mode.load() != Mode::Client || client == nullptr || ! client->isConnected())
+        return;
+
+    const auto message = heartbeatMessageFrom (processor.getInstanceLabelForUi(),
+                                               processor.getBroadcastChannelForUi(),
+                                               processor.getListenChannelForUi());
+    sendJson (*client, message);
+}
+
 // ---- hub side (connection threads) ----
 
 void OrchDelayLink::registerHubConnection (std::unique_ptr<HubConnection> connection)
@@ -279,6 +317,27 @@ void OrchDelayLink::registerHubConnection (std::unique_ptr<HubConnection> connec
 
 void OrchDelayLink::onHubClientMessage (HubConnection* sender, const juce::var& message)
 {
+    const auto type = message.getProperty ("t", juce::var()).toString();
+
+    if (type == "heartbeat")
+    {
+        // Consumed here only - never fanned out (no other client has any use
+        // for it, only the hub's own Connection Matrix does) and never
+        // treated as phrase content.
+        RemoteInstanceStatus status;
+        status.label = message.getProperty ("label", "").toString();
+        status.broadcastChannel = static_cast<int> (message.getProperty ("bc", 0));
+        status.listenChannel = static_cast<int> (message.getProperty ("lc", 0));
+        status.lastSeenMs = juce::Time::currentTimeMillis();
+
+        std::lock_guard<std::mutex> lock (connectionsMutex);
+        remoteStatuses[sender] = status;
+        return;
+    }
+
+    if (type != "phrase")
+        return;
+
     // Dumb fan-out relay to every OTHER connected client - the hub never
     // filters by channel itself, each client decides locally whether it
     // cares (see OrchDelayLink.h's own doc comment).
@@ -317,6 +376,19 @@ void OrchDelayLink::onHubClientGone (HubConnection* connection)
                                 [connection] (const std::unique_ptr<HubConnection>& entry)
                                 { return entry.get() == connection; }),
                 self->serverConnections.end());
+            self->remoteStatuses.erase (connection);
         }
     });
+}
+
+std::vector<OrchDelayLink::RemoteInstanceStatus> OrchDelayLink::getRemoteStatusesForUi() const
+{
+    // Called only from the editor (message thread) - blocking lock is fine,
+    // same reasoning as every other non-audio-thread accessor in this file.
+    std::lock_guard<std::mutex> lock (connectionsMutex);
+    std::vector<RemoteInstanceStatus> result;
+    result.reserve (remoteStatuses.size());
+    for (const auto& [connection, status] : remoteStatuses)
+        result.push_back (status);
+    return result;
 }

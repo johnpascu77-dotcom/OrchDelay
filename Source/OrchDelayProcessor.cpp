@@ -957,7 +957,13 @@ void OrchDelayAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
         std::unique_ptr<juce::XmlElement> xml (state.createXml());
 
         if (xml != nullptr)
+        {
+            // Instance Label (Docs SS31) isn't an APVTS parameter (see
+            // getInstanceLabelForUi's own doc comment) - piggyback it as a
+            // plain XML attribute on the same root element instead.
+            xml->setAttribute ("instanceLabel", getInstanceLabelForUi());
             copyXmlToBinary (*xml, destData);
+        }
     }
 }
 
@@ -966,7 +972,10 @@ void OrchDelayAudioProcessor::setStateInformation (const void* data, int sizeInB
     std::unique_ptr<juce::XmlElement> xml (getXmlFromBinary (data, sizeInBytes));
 
     if (xml != nullptr && xml->hasTagName (parameters.state.getType()))
+    {
+        setInstanceLabel (xml->getStringAttribute ("instanceLabel"));
         parameters.replaceState (juce::ValueTree::fromXml (*xml));
+    }
 
     openPhrase = odly::Phrase {};
     pendingPhrases.clear();
@@ -1020,6 +1029,18 @@ void OrchDelayAudioProcessor::pushIncomingRemotePhrase (const odly::MemoryEntry&
     remoteInboxPending.push_back (entry);
     if (remoteInboxPending.size() > 64)   // safety cap - never grow unbounded if processBlock stalls
         remoteInboxPending.erase (remoteInboxPending.begin());
+}
+
+juce::String OrchDelayAudioProcessor::getInstanceLabelForUi() const
+{
+    std::lock_guard<std::mutex> lock (instanceLabelMutex);
+    return instanceLabel;
+}
+
+void OrchDelayAudioProcessor::setInstanceLabel (const juce::String& label)
+{
+    std::lock_guard<std::mutex> lock (instanceLabelMutex);
+    instanceLabel = label;
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::createParameterLayout()
