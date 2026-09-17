@@ -749,20 +749,37 @@ int main()
               "resolveNextAutonomousFirePpq: after falling far behind, catches up to the first still-future grid point, not just +1 interval");
     }
 
-    // --- resolveRandomTransposeSemitones: deterministic, ranged, symmetric ---
+    // --- resolveRandomTransposeSemitones: independent min/max range (Docs SS32) ---
     {
-        const int a = odly::resolveRandomTransposeSemitones (5, 3, 12);
-        const int b = odly::resolveRandomTransposeSemitones (5, 3, 12);
+        const int a = odly::resolveRandomTransposeSemitones (5, 3, -12, 12);
+        const int b = odly::resolveRandomTransposeSemitones (5, 3, -12, 12);
         check (a == b, "resolveRandomTransposeSemitones: identical inputs always produce identical outputs (determinism)");
-        check (a >= -12 && a <= 12, "resolveRandomTransposeSemitones: result stays within [-range, +range]");
+        check (a >= -12 && a <= 12, "resolveRandomTransposeSemitones: result stays within [min, max]");
 
-        check (odly::resolveRandomTransposeSemitones (5, 3, 0) == 0,
-              "resolveRandomTransposeSemitones: a zero range always resolves to 0");
+        check (odly::resolveRandomTransposeSemitones (5, 3, 7, 7) == 7,
+              "resolveRandomTransposeSemitones: min==max always resolves to that value");
+
+        // A range that doesn't straddle 0 at all - the whole point of SS32 -
+        // must never draw outside it (e.g. never dip to 0 or below).
+        bool everOutsideOffRange = false;
+        for (int i = 0; i < 100; ++i)
+        {
+            const int v = odly::resolveRandomTransposeSemitones (5, i, 5, 20);
+            if (v < 5 || v > 20) everOutsideOffRange = true;
+        }
+        check (! everOutsideOffRange, "resolveRandomTransposeSemitones: a range entirely above 0 (5 to 20) never draws outside it");
+
+        // Order shouldn't matter - passing (max, min) resolves the same as (min, max).
+        bool orderMismatch = false;
+        for (int i = 0; i < 20; ++i)
+            if (odly::resolveRandomTransposeSemitones (5, i, -10, 10) != odly::resolveRandomTransposeSemitones (5, i, 10, -10))
+                orderMismatch = true;
+        check (! orderMismatch, "resolveRandomTransposeSemitones: bounds given in either order resolve identically");
 
         bool sawNegative = false, sawPositive = false;
         for (int i = 0; i < 200; ++i)
         {
-            const int v = odly::resolveRandomTransposeSemitones (5, i, 12);
+            const int v = odly::resolveRandomTransposeSemitones (5, i, -12, 12);
             if (v < 0) sawNegative = true;
             if (v > 0) sawPositive = true;
         }
@@ -771,68 +788,75 @@ int main()
 
     // --- resolveRandomRotationSteps: same shape as Transpose's, salt 4 ------
     {
-        const int a = odly::resolveRandomRotationSteps (5, 3, 8);
-        const int b = odly::resolveRandomRotationSteps (5, 3, 8);
+        const int a = odly::resolveRandomRotationSteps (5, 3, -8, 8);
+        const int b = odly::resolveRandomRotationSteps (5, 3, -8, 8);
         check (a == b, "resolveRandomRotationSteps: identical inputs always produce identical outputs (determinism)");
-        check (a >= -8 && a <= 8, "resolveRandomRotationSteps: result stays within [-range, +range]");
-        check (odly::resolveRandomRotationSteps (5, 3, 0) == 0,
-              "resolveRandomRotationSteps: a zero range always resolves to 0");
+        check (a >= -8 && a <= 8, "resolveRandomRotationSteps: result stays within [min, max]");
+        check (odly::resolveRandomRotationSteps (5, 3, 3, 3) == 3,
+              "resolveRandomRotationSteps: min==max always resolves to that value");
 
         bool sawNegative = false, sawPositive = false;
         for (int i = 0; i < 200; ++i)
         {
-            const int v = odly::resolveRandomRotationSteps (5, i, 8);
+            const int v = odly::resolveRandomRotationSteps (5, i, -8, 8);
             if (v < 0) sawNegative = true;
             if (v > 0) sawPositive = true;
         }
         check (sawNegative && sawPositive, "resolveRandomRotationSteps: draws both negative and positive values across a sample");
     }
 
-    // --- resolveRandomLengthPercent: a CEILING bound, not symmetric ---------
+    // --- resolveRandomLengthPercent: independent min/max range (Docs SS32) --
     {
-        const float a = odly::resolveRandomLengthPercent (5, 3, 80.0f);
-        const float b = odly::resolveRandomLengthPercent (5, 3, 80.0f);
+        const float a = odly::resolveRandomLengthPercent (5, 3, 20.0f, 80.0f);
+        const float b = odly::resolveRandomLengthPercent (5, 3, 20.0f, 80.0f);
         check (std::abs (a - b) < 1e-6f, "resolveRandomLengthPercent: identical inputs always produce identical outputs (determinism)");
-        check (a >= 1.0f && a <= 80.0f, "resolveRandomLengthPercent: result stays within [1, ceiling]");
-        check (std::abs (odly::resolveRandomLengthPercent (5, 3, 1.0f) - 1.0f) < 1e-6f,
-              "resolveRandomLengthPercent: a ceiling of 1% always resolves to exactly 1%");
+        check (a >= 20.0f && a <= 80.0f, "resolveRandomLengthPercent: result stays within [min, max]");
+        check (std::abs (odly::resolveRandomLengthPercent (5, 3, 1.0f, 1.0f) - 1.0f) < 1e-6f,
+              "resolveRandomLengthPercent: min==max always resolves to that exact value");
 
         bool sawLow = false, sawHigh = false;
         for (int i = 0; i < 200; ++i)
         {
-            const float v = odly::resolveRandomLengthPercent (5, i, 100.0f);
+            const float v = odly::resolveRandomLengthPercent (5, i, 1.0f, 100.0f);
             if (v < 50.0f) sawLow = true;
             if (v > 50.0f) sawHigh = true;
         }
         check (sawLow && sawHigh, "resolveRandomLengthPercent: spreads across the full range, not clustered at one end");
     }
 
-    // --- resolveRandomStretchPercent: neutral point is 100%, not 0 ----------
+    // --- resolveRandomStretchPercent: independent min/max, no anchor at 100 (Docs SS32) ---
     {
-        const float a = odly::resolveRandomStretchPercent (5, 3, 200.0f);
-        const float b = odly::resolveRandomStretchPercent (5, 3, 200.0f);
+        const float a = odly::resolveRandomStretchPercent (5, 3, 100.0f, 200.0f);
+        const float b = odly::resolveRandomStretchPercent (5, 3, 100.0f, 200.0f);
         check (std::abs (a - b) < 1e-6f, "resolveRandomStretchPercent: identical inputs always produce identical outputs (determinism)");
-        check (a >= 100.0f && a <= 200.0f, "resolveRandomStretchPercent: a bound ABOVE 100 draws only slower/longer values, never below 100");
+        check (a >= 100.0f && a <= 200.0f, "resolveRandomStretchPercent: stays within [min, max]");
 
-        const float c = odly::resolveRandomStretchPercent (5, 3, 50.0f);
-        check (c >= 50.0f && c <= 100.0f, "resolveRandomStretchPercent: a bound BELOW 100 draws only faster/shorter values, never above 100");
+        // The real point of SS32: a range that never touches 100% at all.
+        const float c = odly::resolveRandomStretchPercent (5, 3, 110.0f, 130.0f);
+        check (c >= 110.0f && c <= 130.0f,
+              "resolveRandomStretchPercent: a range entirely above 100% (110-130) never draws 100% or below");
 
-        check (std::abs (odly::resolveRandomStretchPercent (5, 3, 100.0f) - 100.0f) < 1e-6f,
-              "resolveRandomStretchPercent: a bound of exactly 100% always resolves to 100% (no range)");
+        const float d = odly::resolveRandomStretchPercent (5, 3, 50.0f, 80.0f);
+        check (d >= 50.0f && d <= 80.0f,
+              "resolveRandomStretchPercent: a range entirely below 100% (50-80) never draws 100% or above");
+
+        check (std::abs (odly::resolveRandomStretchPercent (5, 3, 150.0f, 150.0f) - 150.0f) < 1e-6f,
+              "resolveRandomStretchPercent: min==max always resolves to that exact value (no range)");
     }
 
     // --- resolveRandomIntervalPercent: same shape as Stretch's, salt 9 ------
     {
-        const float a = odly::resolveRandomIntervalPercent (5, 3, 200.0f);
-        const float b = odly::resolveRandomIntervalPercent (5, 3, 200.0f);
+        const float a = odly::resolveRandomIntervalPercent (5, 3, 100.0f, 200.0f);
+        const float b = odly::resolveRandomIntervalPercent (5, 3, 100.0f, 200.0f);
         check (std::abs (a - b) < 1e-6f, "resolveRandomIntervalPercent: identical inputs always produce identical outputs (determinism)");
-        check (a >= 100.0f && a <= 200.0f, "resolveRandomIntervalPercent: a bound ABOVE 100 draws only wider values, never below 100");
+        check (a >= 100.0f && a <= 200.0f, "resolveRandomIntervalPercent: stays within [min, max]");
 
-        const float c = odly::resolveRandomIntervalPercent (5, 3, 50.0f);
-        check (c >= 50.0f && c <= 100.0f, "resolveRandomIntervalPercent: a bound BELOW 100 draws only narrower values, never above 100");
+        const float c = odly::resolveRandomIntervalPercent (5, 3, 110.0f, 130.0f);
+        check (c >= 110.0f && c <= 130.0f,
+              "resolveRandomIntervalPercent: a range entirely above 100% never draws 100% or below");
 
-        check (std::abs (odly::resolveRandomIntervalPercent (5, 3, 100.0f) - 100.0f) < 1e-6f,
-              "resolveRandomIntervalPercent: a bound of exactly 100% always resolves to 100% (no range)");
+        check (std::abs (odly::resolveRandomIntervalPercent (5, 3, 150.0f, 150.0f) - 150.0f) < 1e-6f,
+              "resolveRandomIntervalPercent: min==max always resolves to that exact value");
     }
 
     // --- Quantized Stretch: a fixed notation-friendly ratio vocabulary ------
@@ -854,28 +878,36 @@ int main()
               "snapToQuantizedStretch: 180% is closer to 200% than 150%, snaps to 200%");
     }
     {
-        const float a = odly::resolveRandomQuantizedStretchPercent (5, 3, 200.0f);
-        const float b = odly::resolveRandomQuantizedStretchPercent (5, 3, 200.0f);
+        const float a = odly::resolveRandomQuantizedStretchPercent (5, 3, 100.0f, 200.0f);
+        const float b = odly::resolveRandomQuantizedStretchPercent (5, 3, 100.0f, 200.0f);
         check (std::abs (a - b) < 1e-6f, "resolveRandomQuantizedStretchPercent: identical inputs always produce identical outputs (determinism)");
 
         bool aIsLegal = false;
         for (float r : odly::quantizedStretchRatios()) if (std::abs (a - r) < 1e-3f) aIsLegal = true;
         check (aIsLegal, "resolveRandomQuantizedStretchPercent: the result is always an EXACT legal ratio, never an in-between value");
         check (a >= 100.0f - 1e-3f && a <= 200.0f + 1e-3f,
-              "resolveRandomQuantizedStretchPercent: stays within [100, bound] for a bound above 100");
+              "resolveRandomQuantizedStretchPercent: stays within [min, max] for a range above 100");
 
-        const float c = odly::resolveRandomQuantizedStretchPercent (5, 3, 50.0f);
+        const float c = odly::resolveRandomQuantizedStretchPercent (5, 3, 50.0f, 100.0f);
         check (c >= 50.0f - 1e-3f && c <= 100.0f + 1e-3f,
-              "resolveRandomQuantizedStretchPercent: stays within [bound, 100] for a bound below 100");
+              "resolveRandomQuantizedStretchPercent: stays within [min, max] for a range below 100");
 
-        check (std::abs (odly::resolveRandomQuantizedStretchPercent (5, 3, 100.0f) - 100.0f) < 1e-6f,
-              "resolveRandomQuantizedStretchPercent: a bound of exactly 100% always resolves to 100%");
+        check (std::abs (odly::resolveRandomQuantizedStretchPercent (5, 3, 100.0f, 100.0f) - 100.0f) < 1e-6f,
+              "resolveRandomQuantizedStretchPercent: min==max of exactly 100% resolves to 100%");
+
+        // No legal ratio falls inside [110,120] (nearest are 100 and 133.3) -
+        // must still fall back to a real legal ratio, not silently escape
+        // the vocabulary or crash.
+        const float noLegalInRange = odly::resolveRandomQuantizedStretchPercent (5, 3, 110.0f, 120.0f);
+        bool fallbackIsLegal = false;
+        for (float r : odly::quantizedStretchRatios()) if (std::abs (noLegalInRange - r) < 1e-3f) fallbackIsLegal = true;
+        check (fallbackIsLegal, "resolveRandomQuantizedStretchPercent: falls back to a real legal ratio when none falls inside a too-narrow range");
 
         int distinctValues = 0;
         float seenA = -1.0f, seenB = -1.0f;
         for (int i = 0; i < 100 && distinctValues < 2; ++i)
         {
-            const float v = odly::resolveRandomQuantizedStretchPercent (5, i, 400.0f);
+            const float v = odly::resolveRandomQuantizedStretchPercent (5, i, 25.0f, 400.0f);
             if (seenA < 0.0f) seenA = v;
             else if (std::abs (v - seenA) > 1e-3f) { seenB = v; distinctValues = 2; }
         }
@@ -899,24 +931,32 @@ int main()
               "shiftOutputNotes: shifts every note, preserving the phrase's own internal spacing (1 beat apart, still)");
     }
 
-    // --- resolveRandomHoldBars: [1, ceiling], never 0 -------------------------
+    // --- resolveRandomHoldBars: independent min/max, never 0 (Docs SS32) ----
     {
-        const int a = odly::resolveRandomHoldBars (5, 3, 8);
-        const int b = odly::resolveRandomHoldBars (5, 3, 8);
+        const int a = odly::resolveRandomHoldBars (5, 3, 1, 8);
+        const int b = odly::resolveRandomHoldBars (5, 3, 1, 8);
         check (a == b, "resolveRandomHoldBars: identical inputs always produce identical outputs (determinism)");
-        check (a >= 1 && a <= 8, "resolveRandomHoldBars: result stays within [1, ceiling]");
-        check (odly::resolveRandomHoldBars (5, 3, 1) == 1, "resolveRandomHoldBars: a ceiling of 1 always resolves to 1");
+        check (a >= 1 && a <= 8, "resolveRandomHoldBars: result stays within [min, max]");
+        check (odly::resolveRandomHoldBars (5, 3, 5, 5) == 5, "resolveRandomHoldBars: min==max always resolves to that value");
 
         bool sawLow = false, sawHigh = false, everZero = false;
         for (int i = 0; i < 100; ++i)
         {
-            const int v = odly::resolveRandomHoldBars (5, i, 16);
+            const int v = odly::resolveRandomHoldBars (5, i, 1, 16);
             if (v <= 4) sawLow = true;
             if (v >= 13) sawHigh = true;
             if (v < 1) everZero = true;
         }
         check (! everZero, "resolveRandomHoldBars: NEVER draws 0 across a sample - Hold Bars=0 is a dedicated pause state, not a random outcome");
         check (sawLow && sawHigh, "resolveRandomHoldBars: spreads across the full range, not clustered at one end");
+
+        // Even a caller passing 0 as a bound (shouldn't happen given the
+        // parameter layer restricts the range to [1,16], but this is the
+        // pure function's own contract) must still never resolve to 0.
+        bool everZeroFromZeroInput = false;
+        for (int i = 0; i < 50; ++i)
+            if (odly::resolveRandomHoldBars (5, i, 0, 16) < 1) everZeroFromZeroInput = true;
+        check (! everZeroFromZeroInput, "resolveRandomHoldBars: clamps an out-of-contract 0 bound up to 1, never resolves to 0");
     }
 
     // --- memoryEntryToVar/FromVar: cross-instance broadcast wire format ------

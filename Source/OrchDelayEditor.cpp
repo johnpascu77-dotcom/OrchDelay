@@ -82,6 +82,8 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     holdBarsRandomButton.setButtonText ("Random");
     holdBarsRandomButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
     addAndMakeVisible (holdBarsRandomButton);
+    setupRandomRangeBinding (holdBarsRangeSlider, holdBarsSlider, holdBarsRandomButton, holdBarsLabel,
+                             false, "holdBarsRandomMin", "holdBarsRandomMax");
 
     setupLabel (overlapModeLabel, "Overlap Mode");
     addAndMakeVisible (overlapModeLabel);
@@ -179,11 +181,14 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     addAndMakeVisible (transposeLabel);
     setupSlider (transposeSlider);
 
-    // "Random" - when on, Transpose becomes a symmetric range bound instead
-    // of a fixed amount (see odly::resolveRandomTransposeSemitones).
+    // "Random" - when on, Transpose draws from its own dedicated min/max
+    // range instead of a fixed amount (see
+    // odly::resolveRandomTransposeSemitones, Docs SS32).
     transposeRandomButton.setButtonText ("Random");
     transposeRandomButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
     addAndMakeVisible (transposeRandomButton);
+    setupRandomRangeBinding (transposeRangeSlider, transposeSlider, transposeRandomButton, transposeLabel,
+                             false, "transposeRandomMin", "transposeRandomMax");
 
     setupLabel (rotationLabel, "Rotation (steps)");
     addAndMakeVisible (rotationLabel);
@@ -191,6 +196,8 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     rotationRandomButton.setButtonText ("Random");
     rotationRandomButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
     addAndMakeVisible (rotationRandomButton);
+    setupRandomRangeBinding (rotationRangeSlider, rotationSlider, rotationRandomButton, rotationLabel,
+                             false, "rotationRandomMin", "rotationRandomMax");
 
     setupLabel (lengthLabel, "Length (%)");
     addAndMakeVisible (lengthLabel);
@@ -198,6 +205,8 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     lengthRandomButton.setButtonText ("Random");
     lengthRandomButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
     addAndMakeVisible (lengthRandomButton);
+    setupRandomRangeBinding (lengthRangeSlider, lengthSlider, lengthRandomButton, lengthLabel,
+                             true, "lengthRandomMin", "lengthRandomMax");
 
     setupLabel (stretchLabel, "Stretch (%)");
     addAndMakeVisible (stretchLabel);
@@ -208,6 +217,8 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     stretchQuantizedButton.setButtonText ("Quantize");
     stretchQuantizedButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
     addAndMakeVisible (stretchQuantizedButton);
+    setupRandomRangeBinding (stretchRangeSlider, stretchSlider, stretchRandomButton, stretchLabel,
+                             true, "stretchRandomMin", "stretchRandomMax");
 
     setupLabel (intervalLabel, "Interval Scale (%)");
     addAndMakeVisible (intervalLabel);
@@ -215,6 +226,8 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     intervalRandomButton.setButtonText ("Random");
     intervalRandomButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
     addAndMakeVisible (intervalRandomButton);
+    setupRandomRangeBinding (intervalRangeSlider, intervalSlider, intervalRandomButton, intervalLabel,
+                             true, "intervalRandomMin", "intervalRandomMax");
 
     // Cross-instance phrase broadcast (see OrchDelayLink / Docs SS27): lets
     // one instance's captured phrases feed another instance's Remote bank
@@ -325,7 +338,7 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     // so this list is auditable in one place against what's actually shown.
     mainPanelComponents = {
         &bypassButton, &captureModeLabel, &captureModeBox,
-        &holdBarsLabel, &holdBarsSlider, &holdBarsRandomButton,
+        &holdBarsLabel, &holdBarsSlider, &holdBarsRandomButton, &holdBarsRangeSlider,
         &overlapModeLabel, &overlapModeBox,
         &phraseGapLabel, &phraseGapSlider,
         &minimumInterestLabel, &minimumInterestSlider,
@@ -336,11 +349,11 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
         &recencyBiasLabel, &recencyBiasSlider,
         &restlessnessLabel, &restlessnessSlider, &contentAwareWeightingButton,
         &transformLabel, &transformBox,
-        &transposeLabel, &transposeSlider, &transposeRandomButton,
-        &rotationLabel, &rotationSlider, &rotationRandomButton,
-        &lengthLabel, &lengthSlider, &lengthRandomButton,
-        &stretchLabel, &stretchSlider, &stretchRandomButton, &stretchQuantizedButton,
-        &intervalLabel, &intervalSlider, &intervalRandomButton,
+        &transposeLabel, &transposeSlider, &transposeRandomButton, &transposeRangeSlider,
+        &rotationLabel, &rotationSlider, &rotationRandomButton, &rotationRangeSlider,
+        &lengthLabel, &lengthSlider, &lengthRandomButton, &lengthRangeSlider,
+        &stretchLabel, &stretchSlider, &stretchRandomButton, &stretchQuantizedButton, &stretchRangeSlider,
+        &intervalLabel, &intervalSlider, &intervalRandomButton, &intervalRangeSlider,
         &linkHubLabel, &linkHubButton, &clearRemoteButton,
         &broadcastChannelLabel, &broadcastChannelSlider,
         &listenChannelLabel, &listenChannelSlider,
@@ -417,6 +430,7 @@ void OrchDelayAudioProcessorEditor::resized()
     holdBarsRandomButton.setBounds (holdBarsRow.removeFromRight (75));
     holdBarsRow.removeFromRight (8);
     holdBarsSlider.setBounds (holdBarsRow);
+    holdBarsRangeSlider.setBounds (holdBarsRow);
     leftArea.removeFromTop (8);
 
     overlapModeLabel.setBounds (leftRow (18));
@@ -482,6 +496,7 @@ void OrchDelayAudioProcessorEditor::resized()
     transposeRandomButton.setBounds (transposeRow.removeFromRight (90));
     transposeRow.removeFromRight (8);
     transposeSlider.setBounds (transposeRow);
+    transposeRangeSlider.setBounds (transposeRow);
     rightArea.removeFromTop (8);
 
     rotationLabel.setBounds (rightRow (18));
@@ -489,6 +504,7 @@ void OrchDelayAudioProcessorEditor::resized()
     rotationRandomButton.setBounds (rotationRow.removeFromRight (90));
     rotationRow.removeFromRight (8);
     rotationSlider.setBounds (rotationRow);
+    rotationRangeSlider.setBounds (rotationRow);
     rightArea.removeFromTop (8);
 
     lengthLabel.setBounds (rightRow (18));
@@ -496,6 +512,7 @@ void OrchDelayAudioProcessorEditor::resized()
     lengthRandomButton.setBounds (lengthRow.removeFromRight (90));
     lengthRow.removeFromRight (8);
     lengthSlider.setBounds (lengthRow);
+    lengthRangeSlider.setBounds (lengthRow);
     rightArea.removeFromTop (8);
 
     stretchLabel.setBounds (rightRow (18));
@@ -505,6 +522,7 @@ void OrchDelayAudioProcessorEditor::resized()
     stretchRandomButton.setBounds (stretchRow.removeFromRight (75));
     stretchRow.removeFromRight (8);
     stretchSlider.setBounds (stretchRow);
+    stretchRangeSlider.setBounds (stretchRow);
     rightArea.removeFromTop (8);
 
     intervalLabel.setBounds (rightRow (18));
@@ -512,6 +530,7 @@ void OrchDelayAudioProcessorEditor::resized()
     intervalRandomButton.setBounds (intervalRow.removeFromRight (75));
     intervalRow.removeFromRight (8);
     intervalSlider.setBounds (intervalRow);
+    intervalRangeSlider.setBounds (intervalRow);
     rightArea.removeFromTop (8);
 
     // --- Right column, continued: cross-instance broadcast (Docs SS27) ---
@@ -544,6 +563,67 @@ void OrchDelayAudioProcessorEditor::resized()
                           fullWidthArea.getWidth(), contentBottom - fullWidthArea.getY());
 }
 
+void OrchDelayAudioProcessorEditor::setupRandomRangeBinding (juce::Slider& rangeSlider, juce::Slider& manualSlider,
+                                                              juce::ToggleButton& randomButton, juce::Label& label,
+                                                              bool isPercent,
+                                                              const juce::String& minParamId, const juce::String& maxParamId)
+{
+    auto& state = audioProcessor.getParameters();
+    auto* minParam = dynamic_cast<juce::RangedAudioParameter*> (state.getParameter (minParamId));
+    auto* maxParam = dynamic_cast<juce::RangedAudioParameter*> (state.getParameter (maxParamId));
+    auto* minParamRaw = state.getRawParameterValue (minParamId);
+    auto* maxParamRaw = state.getRawParameterValue (maxParamId);
+    jassert (minParam != nullptr && maxParam != nullptr);
+
+    rangeSlider.setSliderStyle (juce::Slider::TwoValueHorizontal);
+    rangeSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    rangeSlider.setColour (juce::Slider::thumbColourId, kThumb);
+    rangeSlider.setColour (juce::Slider::trackColourId, kTrack);
+    if (minParam != nullptr)
+    {
+        const auto& range = minParam->getNormalisableRange();
+        rangeSlider.setRange (range.start, range.end, range.interval);
+    }
+    if (minParamRaw != nullptr && maxParamRaw != nullptr)
+        rangeSlider.setMinAndMaxValues (minParamRaw->load(), maxParamRaw->load(), juce::dontSendNotification);
+    addChildComponent (rangeSlider);   // starts hidden - shown only when Random is on, see timerCallback
+
+    // Hand-wired instead of a SliderAttachment (which only supports
+    // single-value sliders) - see this member's own doc comment in the
+    // header for why. Gesture-bracketed so host automation/undo records it
+    // as one drag, not a value snapping in with no gesture at all.
+    rangeSlider.onDragStart = [minParam, maxParam]
+    {
+        if (minParam != nullptr) minParam->beginChangeGesture();
+        if (maxParam != nullptr) maxParam->beginChangeGesture();
+    };
+    rangeSlider.onDragEnd = [minParam, maxParam]
+    {
+        if (minParam != nullptr) minParam->endChangeGesture();
+        if (maxParam != nullptr) maxParam->endChangeGesture();
+    };
+    rangeSlider.onValueChange = [&rangeSlider, minParam, maxParam]
+    {
+        if (minParam != nullptr)
+            minParam->setValueNotifyingHost (minParam->convertTo0to1 (static_cast<float> (rangeSlider.getMinValue())));
+        if (maxParam != nullptr)
+            maxParam->setValueNotifyingHost (maxParam->convertTo0to1 (static_cast<float> (rangeSlider.getMaxValue())));
+    };
+
+    RandomRangeBinding binding;
+    binding.rangeSlider = &rangeSlider;
+    binding.manualSlider = &manualSlider;
+    binding.randomButton = &randomButton;
+    binding.label = &label;
+    binding.baseLabelText = label.getText();
+    binding.isPercent = isPercent;
+    binding.minParamRaw = minParamRaw;
+    binding.maxParamRaw = maxParamRaw;
+    binding.minParam = minParam;
+    binding.maxParam = maxParam;
+    randomRangeBindings.push_back (binding);
+}
+
 void OrchDelayAudioProcessorEditor::setShowingMatrix (bool shouldShow)
 {
     showingMatrix = shouldShow;
@@ -555,8 +635,13 @@ void OrchDelayAudioProcessorEditor::setShowingMatrix (bool shouldShow)
 
     matrixView.setVisible (shouldShow);
 
-    if (shouldShow)
-        timerCallback();   // paint fresh data immediately, don't wait for the next tick
+    // Unconditional both ways: showing the matrix needs fresh data painted
+    // immediately rather than waiting for the next tick, and returning to
+    // the main view needs the manual-vs-range slider visibility pass
+    // (below) to run right away too - otherwise the blanket "show every
+    // main-panel component" loop above briefly shows BOTH a parameter's
+    // manual slider and its range slider at once, until the next tick.
+    timerCallback();
 }
 
 void OrchDelayAudioProcessorEditor::ConnectionMatrixView::setRows (std::vector<Row> newRows)
@@ -717,28 +802,35 @@ void OrchDelayAudioProcessorEditor::timerCallback()
         return;   // nothing else on screen to refresh while the matrix is up
     }
 
-    // Random Stretch draws uniformly from [min(100,bound), max(100,bound)]
-    // where `bound` is the slider's own current value (see
-    // odly::resolveRandomStretchPercent/resolveRandomQuantizedStretchPercent's
-    // own doc comments) - always anchored at 100%, never a fixed-width
-    // window around some other centre. Surfaced directly on the label so an
-    // external automation source (e.g. a Bitwig LFO driving this same
-    // parameter to fake continuous randomization) can be set to the exact
-    // real boundary instead of an eyeballed approximation - requested
-    // directly by the user after trying exactly that.
-    if (stretchRandomButton.getToggleState())
+    // Random-range two-thumb sliders (Docs SS32): swap each manual slider
+    // for its own range slider when that parameter's Random toggle is on,
+    // and keep the range slider's displayed thumbs (and its label's live
+    // "X to Y" text) in sync with the actual Min/Max parameter values -
+    // unless the user is mid-drag, which would otherwise fight the drag.
+    for (auto& binding : randomRangeBindings)
     {
-        const float bound = static_cast<float> (stretchSlider.getValue());
-        const float lo = juce::jmin (100.0f, bound);
-        const float hi = juce::jmax (100.0f, bound);
-        juce::String text = "Stretch (%) - range " + juce::String (lo, 1) + "% to " + juce::String (hi, 1) + "%";
-        if (stretchQuantizedButton.getToggleState())
+        const bool randomOn = binding.randomButton != nullptr && binding.randomButton->getToggleState();
+        binding.manualSlider->setVisible (! randomOn);
+        binding.rangeSlider->setVisible (randomOn);
+
+        if (! randomOn)
+        {
+            binding.label->setText (binding.baseLabelText, juce::dontSendNotification);
+            continue;
+        }
+
+        const float lo = binding.minParamRaw != nullptr ? binding.minParamRaw->load() : 0.0f;
+        const float hi = binding.maxParamRaw != nullptr ? binding.maxParamRaw->load() : 0.0f;
+
+        if (! binding.rangeSlider->isMouseButtonDown())
+            binding.rangeSlider->setMinAndMaxValues (lo, hi, juce::dontSendNotification);
+
+        juce::String text = binding.baseLabelText + " - ";
+        text += binding.isPercent ? (juce::String (lo, 1) + "% to " + juce::String (hi, 1) + "%")
+                                  : (juce::String (juce::roundToInt (lo)) + " to " + juce::String (juce::roundToInt (hi)));
+        if (binding.rangeSlider == &stretchRangeSlider && stretchQuantizedButton.getToggleState())
             text += " (quantized)";
-        stretchLabel.setText (text, juce::dontSendNotification);
-    }
-    else
-    {
-        stretchLabel.setText ("Stretch (%)", juce::dontSendNotification);
+        binding.label->setText (text, juce::dontSendNotification);
     }
 
     const bool haveTransport = audioProcessor.hasTransportForUi();

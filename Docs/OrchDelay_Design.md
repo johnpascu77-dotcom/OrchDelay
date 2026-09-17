@@ -1389,3 +1389,57 @@ that reordering was a stepping stone superseded by this fix, not a needed perman
 No new `odly::` pure function - purely processor-level state tracking, so no new test coverage (172
 existing assertions unaffected, confirmed passing). Rebuilt + reinstalled, Build ~2026-09-17. **Not yet
 live-tested.**
+
+## SS32. Two-handle min/max Random ranges - all 6 Random-capable parameters, replacing the old single-bound model
+
+User asked directly, after the Stretch-range-label fix (see SS31's own addendum above): "I was imagining
+the Stretch Random boundaries as two handles on the slider (min and max)... Equally useful for the other
+parameters. Is this possible?" - genuinely different from what shipped moments earlier: the OLD model
+always anchored one end of the Random draw at a fixed point (100% for Stretch/Interval, 0 for Transpose/
+Rotation, 1 for Length/Hold Bars) and used the single manual slider as the OTHER bound; the user wants two
+fully independent bounds with no forced anchor (e.g. Stretch constrained to 110%-130%, never touching 100%
+at all). Asked which of the 6 Random-capable parameters (Hold Bars, Transpose, Rotation, Length, Stretch,
+Interval Scale) should get this - user chose all 6, for consistency.
+
+**Backend**: every `odly::resolveRandom*` function's signature changed from `(seed, counter, bound)` to
+`(seed, counter, minValue, maxValue)` - no longer computing `lo`/`hi` from a single value against a fixed
+anchor, just sorting whichever of the two args is smaller and drawing uniformly between them (or, for
+`resolveRandomQuantizedStretchPercent`, restricting to legal ratios within that range, with a NEW fallback
+- snap the range's own midpoint to the nearest legal ratio - for the case where NO legal ratio falls
+inside a narrow chosen range, e.g. [110,120]; the old model never needed this fallback since one bound was
+always exactly 100, itself always a legal ratio). 12 new APVTS parameters (a Min/Max pair per control),
+kept deliberately SEPARATE from each control's existing single "manual value" parameter - the manual
+parameter is completely unchanged, used only when Random is off; Random mode now reads exclusively from
+its own dedicated pair. Hold Bars' own pair is range-restricted to [1,16] at the parameter layer itself
+(not just runtime-clamped) - Hold Bars=0 is the dedicated pause state (Docs SS17), a random draw must
+never be able to reach it by construction.
+
+**Editor**: each of the 6 gets a genuine two-thumb `juce::Slider` (`SliderStyle::TwoValueHorizontal`,
+JUCE's native range-slider mode) occupying the EXACT same layout slot as its manual counterpart, shown
+instead of it (never alongside) when that parameter's own Random toggle is on. `AudioProcessorValueTreeState`'s
+attachment classes are single-value only, so each range slider is hand-wired: `onValueChange` pushes both
+thumb positions into their own Min/Max parameters via `setValueNotifyingHost` (normalised through
+`convertTo0to1`, matching what the JUCE attachment classes do internally), `onDragStart`/`onDragEnd`
+bracket the whole drag with `beginChangeGesture`/`endChangeGesture` so a host's automation/undo records it
+as one gesture rather than a value snapping in with none. `timerCallback` pulls the live parameter values
+back into the slider's own display every tick UNLESS the user is actively dragging it
+(`isMouseButtonDown()`), covering undo/project-load/any-other-external-change without a second sync path.
+Each control's own LABEL doubles as the readout - e.g. "Stretch (%) - 75.0% to 150.0%" - reusing the exact
+mechanism built for the Stretch-only version in SS31's own addendum, now generalized and driving ALL 6
+through one shared `RandomRangeBinding` struct + `setupRandomRangeBinding` helper rather than six
+near-duplicate blocks.
+
+Verified visually via Standalone: Stretch, Hold Bars (integer formatting, no decimal), and Transpose
+(symmetric range, e.g. "-12 to 12") all render and drag correctly, writing real parameter changes (dragged
+Stretch's max thumb live, watched the label go from "75.0% to 150.0%" to "75.0% to 299.0%" and the actual
+parameter value follow). Also confirmed the Connection Matrix round-trip (Docs SS31) doesn't disturb
+mid-edit range-slider state - opening and closing the matrix while 3 different Random ranges were active
+left all three exactly as set.
+
+6 replaced test blocks + 3 new ones in `OrchDelayLogicCheck.cpp` (still 100% pass): each resolver's own
+determinism/bounds checks updated for the new 2-argument signature, PLUS new coverage for the actual point
+of this feature - a range that never touches the old anchor at all (e.g. Stretch [110,130] never draws
+100% or below), min==max resolving to that exact value (replacing "bound of exactly the anchor" from the
+old model), and the Quantized-Stretch no-legal-ratio-in-range fallback. Rebuilt+reinstalled, Build
+~2026-09-17. **Not yet live-tested** in Bitwig - Standalone verification covers UI/parameter-wiring
+correctness, not real captured-phrase musical behavior.

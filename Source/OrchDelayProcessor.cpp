@@ -19,21 +19,33 @@ OrchDelayAudioProcessor::OrchDelayAudioProcessor()
     bypassParameter = parameters.getRawParameterValue ("bypass");
     holdBarsParameter = parameters.getRawParameterValue ("holdBars");
     holdBarsRandomParameter = parameters.getRawParameterValue ("holdBarsRandom");
+    holdBarsRandomMinParameter = parameters.getRawParameterValue ("holdBarsRandomMin");
+    holdBarsRandomMaxParameter = parameters.getRawParameterValue ("holdBarsRandomMax");
     overlapModeParameter = parameters.getRawParameterValue ("overlapMode");
     phraseGapBeatsParameter = parameters.getRawParameterValue ("phraseGapBeats");
     restlessnessParameter = parameters.getRawParameterValue ("restlessness");
     manualTransformParameter = parameters.getRawParameterValue ("manualTransform");
     transposeSemitonesParameter = parameters.getRawParameterValue ("transposeSemitones");
     transposeRandomParameter = parameters.getRawParameterValue ("transposeRandom");
+    transposeRandomMinParameter = parameters.getRawParameterValue ("transposeRandomMin");
+    transposeRandomMaxParameter = parameters.getRawParameterValue ("transposeRandomMax");
     rotationStepsParameter = parameters.getRawParameterValue ("rotationSteps");
     rotationRandomParameter = parameters.getRawParameterValue ("rotationRandom");
+    rotationRandomMinParameter = parameters.getRawParameterValue ("rotationRandomMin");
+    rotationRandomMaxParameter = parameters.getRawParameterValue ("rotationRandomMax");
     lengthPercentParameter = parameters.getRawParameterValue ("lengthPercent");
     lengthRandomParameter = parameters.getRawParameterValue ("lengthRandom");
+    lengthRandomMinParameter = parameters.getRawParameterValue ("lengthRandomMin");
+    lengthRandomMaxParameter = parameters.getRawParameterValue ("lengthRandomMax");
     stretchPercentParameter = parameters.getRawParameterValue ("stretchPercent");
     stretchRandomParameter = parameters.getRawParameterValue ("stretchRandom");
+    stretchRandomMinParameter = parameters.getRawParameterValue ("stretchRandomMin");
+    stretchRandomMaxParameter = parameters.getRawParameterValue ("stretchRandomMax");
     stretchQuantizedParameter = parameters.getRawParameterValue ("stretchQuantized");
     intervalScalePercentParameter = parameters.getRawParameterValue ("intervalScalePercent");
     intervalRandomParameter = parameters.getRawParameterValue ("intervalRandom");
+    intervalRandomMinParameter = parameters.getRawParameterValue ("intervalRandomMin");
+    intervalRandomMaxParameter = parameters.getRawParameterValue ("intervalRandomMax");
     contentAwareWeightingParameter = parameters.getRawParameterValue ("contentAwareWeighting");
     minimumInterestParameter = parameters.getRawParameterValue ("minimumInterest");
     callbackProbabilityParameter = parameters.getRawParameterValue ("callbackProbability");
@@ -184,18 +196,24 @@ void OrchDelayAudioProcessor::resolveAndScheduleTransform (odly::Phrase& phrase,
     lastManualChoiceUi.store (manualChoice);
     lastChosenTransformUi.store (phrase.chosenTransform);
 
-    // Random modes: the passed-in/read parameter values become RANGE bounds
-    // to draw from (symmetric for Transpose/Rotation, a ceiling for Length,
-    // since Length has no negative/symmetric meaning) rather than literal
-    // amounts - see each resolveRandom*'s own doc comment.
+    // Random modes: draw from an independent min/max range (Docs SS32),
+    // read directly from each parameter's own dedicated Min/Max pair -
+    // never anchored to the manual value or to a fixed neutral point
+    // anymore - see each resolveRandom*'s own doc comment.
     const int resolvedTransposeSemitones = transposeRandom
-        ? odly::resolveRandomTransposeSemitones (instanceSeed, phraseCounter, transposeSemitones)
+        ? odly::resolveRandomTransposeSemitones (instanceSeed, phraseCounter,
+                                                 transposeRandomMinParameter != nullptr ? juce::roundToInt (transposeRandomMinParameter->load()) : -12,
+                                                 transposeRandomMaxParameter != nullptr ? juce::roundToInt (transposeRandomMaxParameter->load()) : 12)
         : transposeSemitones;
     const int resolvedRotationSteps = rotationRandom
-        ? odly::resolveRandomRotationSteps (instanceSeed, phraseCounter, rotationSteps)
+        ? odly::resolveRandomRotationSteps (instanceSeed, phraseCounter,
+                                            rotationRandomMinParameter != nullptr ? juce::roundToInt (rotationRandomMinParameter->load()) : -4,
+                                            rotationRandomMaxParameter != nullptr ? juce::roundToInt (rotationRandomMaxParameter->load()) : 4)
         : rotationSteps;
     const float resolvedLengthPercent = lengthRandom
-        ? odly::resolveRandomLengthPercent (instanceSeed, phraseCounter, lengthPercent)
+        ? odly::resolveRandomLengthPercent (instanceSeed, phraseCounter,
+                                            lengthRandomMinParameter != nullptr ? lengthRandomMinParameter->load() : 25.0f,
+                                            lengthRandomMaxParameter != nullptr ? lengthRandomMaxParameter->load() : 100.0f)
         : lengthPercent;
     // Quantized restricts Stretch to a fixed vocabulary of notation-friendly
     // ratios (see Docs SS16). Combined with Random, the draw happens
@@ -204,17 +222,21 @@ void OrchDelayAudioProcessor::resolveAndScheduleTransform (odly::Phrase& phrase,
     // the choice instead of adding an escape hatch on top of one.
     const float resolvedStretchPercent = [&]
     {
+        const float stretchMin = stretchRandomMinParameter != nullptr ? stretchRandomMinParameter->load() : 75.0f;
+        const float stretchMax = stretchRandomMaxParameter != nullptr ? stretchRandomMaxParameter->load() : 150.0f;
         if (stretchRandom && stretchQuantized)
-            return odly::resolveRandomQuantizedStretchPercent (instanceSeed, phraseCounter, stretchPercent);
+            return odly::resolveRandomQuantizedStretchPercent (instanceSeed, phraseCounter, stretchMin, stretchMax);
         if (stretchRandom)
-            return odly::resolveRandomStretchPercent (instanceSeed, phraseCounter, stretchPercent);
+            return odly::resolveRandomStretchPercent (instanceSeed, phraseCounter, stretchMin, stretchMax);
         if (stretchQuantized)
             return odly::snapToQuantizedStretch (stretchPercent);
         return stretchPercent;
     }();
     lastResolvedStretchPercentUi.store (resolvedStretchPercent);
     const float resolvedIntervalScalePercent = intervalRandom
-        ? odly::resolveRandomIntervalPercent (instanceSeed, phraseCounter, intervalScalePercent)
+        ? odly::resolveRandomIntervalPercent (instanceSeed, phraseCounter,
+                                              intervalRandomMinParameter != nullptr ? intervalRandomMinParameter->load() : 75.0f,
+                                              intervalRandomMaxParameter != nullptr ? intervalRandomMaxParameter->load() : 200.0f)
         : intervalScalePercent;
 
     // Built ONCE here, not re-derived at fire time - see odly::Phrase's own
@@ -555,7 +577,9 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
                 const int instanceSeedAtStop = instanceSeedParameter != nullptr
                     ? juce::jlimit (0, 127, juce::roundToInt (instanceSeedParameter->load())) : 0;
                 const int holdBarsAtStop = holdBarsRandomAtStop
-                    ? odly::resolveRandomHoldBars (instanceSeedAtStop, phraseCounter, baseHoldBarsAtStop)
+                    ? odly::resolveRandomHoldBars (instanceSeedAtStop, phraseCounter,
+                                                   holdBarsRandomMinParameter != nullptr ? juce::roundToInt (holdBarsRandomMinParameter->load()) : 1,
+                                                   holdBarsRandomMaxParameter != nullptr ? juce::roundToInt (holdBarsRandomMaxParameter->load()) : 8)
                     : baseHoldBarsAtStop;
                 const int transposeSemitonesAtStop = transposeSemitonesParameter != nullptr
                     ? juce::jlimit (-48, 48, juce::roundToInt (transposeSemitonesParameter->load())) : 12;
@@ -629,7 +653,9 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
             const int instanceSeedForHold = instanceSeedParameter != nullptr
                 ? juce::jlimit (0, 127, juce::roundToInt (instanceSeedParameter->load())) : 0;
             const int holdBars = holdBarsRandom
-                ? odly::resolveRandomHoldBars (instanceSeedForHold, phraseCounter, baseHoldBars)
+                ? odly::resolveRandomHoldBars (instanceSeedForHold, phraseCounter,
+                                               holdBarsRandomMinParameter != nullptr ? juce::roundToInt (holdBarsRandomMinParameter->load()) : 1,
+                                               holdBarsRandomMaxParameter != nullptr ? juce::roundToInt (holdBarsRandomMaxParameter->load()) : 8)
                 : baseHoldBars;
             const int captureMode = captureModeParameter != nullptr
                 ? juce::jlimit (0, 2, juce::roundToInt (captureModeParameter->load())) : odly::kCaptureReplace;
@@ -1157,14 +1183,29 @@ juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::cre
         "Hold Bars",
         0, 16, 4));
 
-    // When on, drawn per phrase from [1, Hold Bars] instead of the fixed
-    // value - never 0, a random draw should never silently re-enable
-    // capturing by chance if the base Hold Bars is deliberately paused (see
+    // When on, drawn per phrase from the dedicated min/max range below
+    // instead of the fixed Hold Bars value (Docs SS32) - never 0, a random
+    // draw should never silently re-enable capturing by chance (see
     // odly::resolveRandomHoldBars).
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "holdBarsRandom", 1 },
         "Random Hold Bars",
         false));
+
+    // Independent min/max range Random Hold Bars draws from (Docs SS32,
+    // replacing the old single-slider-as-ceiling model) - see
+    // odly::resolveRandomHoldBars. Range restricted to [1,16], never 0, at
+    // the parameter layer itself - Hold Bars=0 is the dedicated "pause
+    // capturing" state, a random draw must never be able to land there by
+    // choosing a range that happens to include it.
+    params.push_back (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { "holdBarsRandomMin", 1 },
+        "Random Hold Bars Min",
+        1, 16, 1));
+    params.push_back (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { "holdBarsRandomMax", 1 },
+        "Random Hold Bars Max",
+        1, 16, 8));
 
     // Governs what happens when a due answer's own start collides with an
     // earlier answer still audibly sounding (see Docs SS17 - not every
@@ -1221,14 +1262,28 @@ juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::cre
         -48, 48, 12));
 
     // When on, the amount actually used per phrase is drawn deterministically
-    // (Instance Seed + phrase count, reload-stable) from [-|Transpose|,
-    // +|Transpose|] instead of always using the fixed Transpose value - see
-    // odly::resolveRandomTransposeSemitones. Only affects the Transpose
-    // transform, whether reached manually or via Follow Restlessness.
+    // (Instance Seed + phrase count, reload-stable) from the dedicated min/
+    // max range below (Docs SS32) instead of always using the fixed
+    // Transpose value - see odly::resolveRandomTransposeSemitones. Only
+    // affects the Transpose transform, whether reached manually or via
+    // Follow Restlessness.
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "transposeRandom", 1 },
         "Random Transpose",
         false));
+
+    // Independent min/max range Random Transpose draws from (Docs SS32,
+    // replacing the old symmetric-around-0 model) - see
+    // odly::resolveRandomTransposeSemitones. No longer required to straddle
+    // 0; either bound may be on either side.
+    params.push_back (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { "transposeRandomMin", 1 },
+        "Random Transpose Min",
+        -48, 48, -12));
+    params.push_back (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { "transposeRandomMax", 1 },
+        "Random Transpose Max",
+        -48, 48, 12));
 
     // Rotation amount - cyclic reassignment of which captured note's pitch
     // plays at each onset slot (see odly::applyRotation). Wraps automatically
@@ -1239,12 +1294,24 @@ juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::cre
         "Rotation (steps)",
         -16, 16, 1));
 
-    // When on, drawn per phrase from [-|Rotation|, +|Rotation|] instead of
-    // the fixed value - see odly::resolveRandomRotationSteps.
+    // When on, drawn per phrase from the dedicated min/max range below
+    // (Docs SS32) instead of the fixed value - see
+    // odly::resolveRandomRotationSteps.
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "rotationRandom", 1 },
         "Random Rotation",
         false));
+
+    // Independent min/max range Random Rotation draws from (Docs SS32) -
+    // see odly::resolveRandomRotationSteps.
+    params.push_back (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { "rotationRandomMin", 1 },
+        "Random Rotation Min",
+        -16, 16, -4));
+    params.push_back (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { "rotationRandomMax", 1 },
+        "Random Rotation Max",
+        -16, 16, 4));
 
     // How much of the captured phrase (by note count, first-to-last) actually
     // gets echoed - see odly::applyLength. 100% = the whole phrase, matching
@@ -1265,14 +1332,47 @@ juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::cre
                 return text.retainCharacters ("0123456789.").getFloatValue();
             })));
 
-    // When on, drawn per phrase from [1%, Length%] instead of the fixed
-    // value - Length has no negative/symmetric meaning, so the slider
-    // becomes a ceiling here, not a symmetric bound - see
+    // When on, drawn per phrase from the dedicated min/max range below
+    // (Docs SS32) instead of the fixed value - see
     // odly::resolveRandomLengthPercent.
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "lengthRandom", 1 },
         "Random Length",
         false));
+
+    // Independent min/max range Random Length draws from (Docs SS32,
+    // replacing the old single-slider-as-ceiling model) - see
+    // odly::resolveRandomLengthPercent.
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lengthRandomMin", 1 },
+        "Random Length Min",
+        juce::NormalisableRange<float> (1.0f, 100.0f, 1.0f),
+        25.0f,
+        juce::AudioParameterFloatAttributes()
+            .withLabel ("%")
+            .withStringFromValueFunction ([] (float value, int)
+            {
+                return juce::String (juce::roundToInt (value)) + "%";
+            })
+            .withValueFromStringFunction ([] (const juce::String& text)
+            {
+                return text.retainCharacters ("0123456789.").getFloatValue();
+            })));
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "lengthRandomMax", 1 },
+        "Random Length Max",
+        juce::NormalisableRange<float> (1.0f, 100.0f, 1.0f),
+        100.0f,
+        juce::AudioParameterFloatAttributes()
+            .withLabel ("%")
+            .withStringFromValueFunction ([] (float value, int)
+            {
+                return juce::String (juce::roundToInt (value)) + "%";
+            })
+            .withValueFromStringFunction ([] (const juce::String& text)
+            {
+                return text.retainCharacters ("0123456789.").getFloatValue();
+            })));
 
     // Proportional time-stretch of the echoed phrase - see odly::applyStretch.
     // 100% = unchanged; not achievable as a live, per-echo, potentially-
@@ -1294,15 +1394,49 @@ juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::cre
                 return text.retainCharacters ("0123456789.").getFloatValue();
             })));
 
-    // When on, drawn per phrase from [100%, Stretch%] (whichever side of
-    // 100 the slider sits on) instead of the fixed value - Stretch's
-    // neutral point is 100%, not 0, so this isn't a symmetric bound like
-    // Transpose/Rotation's own Random modes - see
+    // When on, drawn per phrase from the dedicated min/max range below
+    // (Docs SS32) instead of the fixed value - see
     // odly::resolveRandomStretchPercent.
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "stretchRandom", 1 },
         "Random Stretch",
         false));
+
+    // Independent min/max range Random Stretch draws from (Docs SS32,
+    // replacing the old anchored-at-100% model - a range no longer needs to
+    // straddle 100%, e.g. [110,130] is now a legal always-slightly-longer
+    // range) - see odly::resolveRandomStretchPercent /
+    // resolveRandomQuantizedStretchPercent.
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "stretchRandomMin", 1 },
+        "Random Stretch Min",
+        juce::NormalisableRange<float> (25.0f, 400.0f, 1.0f),
+        75.0f,
+        juce::AudioParameterFloatAttributes()
+            .withLabel ("%")
+            .withStringFromValueFunction ([] (float value, int)
+            {
+                return juce::String (juce::roundToInt (value)) + "%";
+            })
+            .withValueFromStringFunction ([] (const juce::String& text)
+            {
+                return text.retainCharacters ("0123456789.").getFloatValue();
+            })));
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "stretchRandomMax", 1 },
+        "Random Stretch Max",
+        juce::NormalisableRange<float> (25.0f, 400.0f, 1.0f),
+        150.0f,
+        juce::AudioParameterFloatAttributes()
+            .withLabel ("%")
+            .withStringFromValueFunction ([] (float value, int)
+            {
+                return juce::String (juce::roundToInt (value)) + "%";
+            })
+            .withValueFromStringFunction ([] (const juce::String& text)
+            {
+                return text.retainCharacters ("0123456789.").getFloatValue();
+            })));
 
     // When on, restricts the actual stretch ratio used to a fixed vocabulary
     // of "notation-friendly" values (see odly::quantizedStretchRatios) -
@@ -1337,14 +1471,47 @@ juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::cre
                 return text.retainCharacters ("0123456789.").getFloatValue();
             })));
 
-    // When on, drawn per phrase from [100%, Interval Scale%] (whichever side
-    // of 100 the slider sits on) instead of the fixed value - same
-    // asymmetric-bound convention as Random Stretch, since Interval Scale's
-    // neutral point is also 100%, not 0 - see odly::resolveRandomIntervalPercent.
+    // When on, drawn per phrase from the dedicated min/max range below
+    // (Docs SS32) instead of the fixed value - see
+    // odly::resolveRandomIntervalPercent.
     params.push_back (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "intervalRandom", 1 },
         "Random Interval",
         false));
+
+    // Independent min/max range Random Interval draws from (Docs SS32,
+    // replacing the old anchored-at-100% model) - see
+    // odly::resolveRandomIntervalPercent.
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "intervalRandomMin", 1 },
+        "Random Interval Min",
+        juce::NormalisableRange<float> (0.0f, 300.0f, 1.0f),
+        75.0f,
+        juce::AudioParameterFloatAttributes()
+            .withLabel ("%")
+            .withStringFromValueFunction ([] (float value, int)
+            {
+                return juce::String (juce::roundToInt (value)) + "%";
+            })
+            .withValueFromStringFunction ([] (const juce::String& text)
+            {
+                return text.retainCharacters ("0123456789.").getFloatValue();
+            })));
+    params.push_back (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { "intervalRandomMax", 1 },
+        "Random Interval Max",
+        juce::NormalisableRange<float> (0.0f, 300.0f, 1.0f),
+        200.0f,
+        juce::AudioParameterFloatAttributes()
+            .withLabel ("%")
+            .withStringFromValueFunction ([] (float value, int)
+            {
+                return juce::String (juce::roundToInt (value)) + "%";
+            })
+            .withValueFromStringFunction ([] (const juce::String& text)
+            {
+                return text.retainCharacters ("0123456789.").getFloatValue();
+            })));
 
     // Biases WHICH transform Follow Restlessness picks by the phrase's own
     // features (density/pitch spread/note count) instead of a flat 1-in-8

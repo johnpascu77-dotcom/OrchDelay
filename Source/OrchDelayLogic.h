@@ -506,46 +506,40 @@ namespace odly
     // is on: deterministic (same instanceSeed+phraseCounter -> same result,
     // reload-stable, same hash construction as proposeTransform but salt 3
     // to stay independent of the transform-choice draws), drawn uniformly
-    // from [-|rangeSemitones|, +|rangeSemitones|]. The Transpose (semitones)
-    // parameter itself becomes this symmetric RANGE bound in Random mode,
-    // rather than a literal fixed amount - so raising/lowering that one
-    // slider still controls "how far," just now as a ceiling instead of an
-    // exact value. rangeSemitones==0 always resolves to 0 (no range to draw
-    // from).
-    int resolveRandomTransposeSemitones (int instanceSeed, int phraseCounter, int rangeSemitones);
+    // from [minSemitones, maxSemitones] - two genuinely independent bounds
+    // (Docs SS32), NOT required to straddle 0 or be symmetric; the caller
+    // (or order given) may be either way round, this function sorts them
+    // itself. minSemitones==maxSemitones always resolves to that one value
+    // (no range to draw from). Both clamped to [-48, 48].
+    int resolveRandomTransposeSemitones (int instanceSeed, int phraseCounter, int minSemitones, int maxSemitones);
 
-    // Same idea as resolveRandomTransposeSemitones, for Rotation - the
-    // Rotation (steps) slider becomes a symmetric range bound
-    // [-|rangeSteps|, +|rangeSteps|] when Random Rotation is on. Salt 4,
+    // Same idea as resolveRandomTransposeSemitones, for Rotation - draws
+    // uniformly from [minSteps, maxSteps], both clamped to [-16, 16]. Salt 4,
     // independent of every other seeded draw in this file.
-    int resolveRandomRotationSteps (int instanceSeed, int phraseCounter, int rangeSteps);
+    int resolveRandomRotationSteps (int instanceSeed, int phraseCounter, int minSteps, int maxSteps);
 
-    // Same idea again, for Length - but Length has no negative/symmetric
-    // meaning (it's always a 0-100% fraction of the phrase), so the Length
-    // (%) slider becomes a CEILING instead: drawn uniformly from
-    // [1, ceilingPercent]. Salt 5.
-    float resolveRandomLengthPercent (int instanceSeed, int phraseCounter, float ceilingPercent);
+    // Same idea again, for Length - draws uniformly from [minPercent,
+    // maxPercent], both clamped to [1, 100]. Salt 5.
+    float resolveRandomLengthPercent (int instanceSeed, int phraseCounter, float minPercent, float maxPercent);
 
-    // Stretch's neutral point is 100% (unchanged), not 0 - so unlike
-    // Transpose/Rotation's symmetric-around-0 bound, this draws uniformly
-    // between 100% and `boundPercent`, whichever side of 100 that bound
-    // falls on setting the direction (a bound of 200% wanders slower/
-    // longer only, never faster; a bound of 50% wanders faster/shorter
-    // only). boundPercent==100 always resolves to exactly 100 (no range).
-    // Salt 6.
-    float resolveRandomStretchPercent (int instanceSeed, int phraseCounter, float boundPercent);
+    // Draws uniformly from [minPercent, maxPercent], both clamped to
+    // [25, 400] - no longer required to straddle Stretch's own 100% neutral
+    // point (Docs SS32 removed that anchor; a range can sit entirely above
+    // or below 100%, or skip it altogether, e.g. [110,130]). Salt 6.
+    float resolveRandomStretchPercent (int instanceSeed, int phraseCounter, float minPercent, float maxPercent);
 
-    // Same idea, for Hold Bars: drawn uniformly from [1, ceilingBars]
-    // (never 0 - Hold Bars=0 is the dedicated "pause capturing" state, see
-    // Docs SS17, and a random draw should never silently re-enable
-    // capturing by chance). ceilingBars is clamped to [1,16]; a ceiling of
-    // 1 always resolves to 1 (no range). Salt 8.
-    int resolveRandomHoldBars (int instanceSeed, int phraseCounter, int ceilingBars);
+    // Same idea, for Hold Bars: drawn uniformly from [minBars, maxBars],
+    // both clamped to [1, 16] - never 0, Hold Bars=0 is the dedicated
+    // "pause capturing" state (see Docs SS17), and a random draw should
+    // never silently re-enable capturing by chance; the parameter range
+    // this reads from is itself restricted to [1,16] at the APVTS layer for
+    // the same reason, not just clamped here defensively. Salt 8.
+    int resolveRandomHoldBars (int instanceSeed, int phraseCounter, int minBars, int maxBars);
 
-    // Same asymmetric-bound convention as resolveRandomStretchPercent -
-    // Interval's own neutral point is also 100% (unchanged), not 0 - draws
-    // uniformly between 100% and `boundPercent`. Salt 9.
-    float resolveRandomIntervalPercent (int instanceSeed, int phraseCounter, float boundPercent);
+    // Same idea, for Interval Scale: draws uniformly from [minPercent,
+    // maxPercent], both clamped to [0, 300] - no longer anchored at 100%
+    // (Docs SS32), same reasoning as resolveRandomStretchPercent. Salt 9.
+    float resolveRandomIntervalPercent (int instanceSeed, int phraseCounter, float minPercent, float maxPercent);
 
     // --- Quantized Stretch (see Docs SS16) ----------------------------------
     // The fixed vocabulary of "notation-friendly" Stretch ratios (%): simple
@@ -568,12 +562,16 @@ namespace odly
 
     // Resolves the ACTUAL stretch percentage when Random AND Quantized are
     // BOTH on: draws UNIFORMLY from quantizedStretchRatios() restricted to
-    // whichever side of 100% `boundPercent` points toward (same bound
-    // convention as resolveRandomStretchPercent) - deliberately narrows the
+    // [minPercent, maxPercent] (same independent-bounds convention as
+    // resolveRandomStretchPercent, Docs SS32) - deliberately narrows the
     // draw to the legal ratio set directly, rather than drawing a
     // continuous value and snapping it afterward, which would silently bias
     // the result toward whichever ratio sits nearest the middle of the
     // continuous range instead of giving every legal ratio an equal chance.
-    // Salt 7, independent of every other seeded draw in this file.
-    float resolveRandomQuantizedStretchPercent (int instanceSeed, int phraseCounter, float boundPercent);
+    // If NO legal ratio falls inside the chosen range (e.g. [110,120], too
+    // narrow to contain one), falls back to the single legal ratio nearest
+    // the range's own midpoint - always returns something inside the
+    // notation-friendly vocabulary, never silently outside it. Salt 7,
+    // independent of every other seeded draw in this file.
+    float resolveRandomQuantizedStretchPercent (int instanceSeed, int phraseCounter, float minPercent, float maxPercent);
 }

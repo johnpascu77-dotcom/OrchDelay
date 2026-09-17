@@ -556,49 +556,50 @@ namespace odly
         return poolSize - 1;   // float-rounding safety net - never fall off the end unresolved
     }
 
-    int resolveRandomTransposeSemitones (int instanceSeed, int phraseCounter, int rangeSemitones)
+    int resolveRandomTransposeSemitones (int instanceSeed, int phraseCounter, int minSemitones, int maxSemitones)
     {
-        const int bound = juce::jlimit (0, 48, rangeSemitones < 0 ? -rangeSemitones : rangeSemitones);
-        if (bound == 0)
-            return 0;
+        const int lo = juce::jlimit (-48, 48, juce::jmin (minSemitones, maxSemitones));
+        const int hi = juce::jlimit (-48, 48, juce::jmax (minSemitones, maxSemitones));
+        if (lo == hi)
+            return lo;
 
         const float unit = hashUnit (instanceSeed, phraseCounter, 3);   // salt 3 - independent of proposeTransform's 1/2
-        const int span = 2 * bound + 1;   // inclusive [-bound, +bound]
+        const int span = hi - lo + 1;
         const int offset = juce::jlimit (0, span - 1, static_cast<int> (unit * static_cast<float> (span)));
-        return -bound + offset;
+        return lo + offset;
     }
 
-    int resolveRandomRotationSteps (int instanceSeed, int phraseCounter, int rangeSteps)
+    int resolveRandomRotationSteps (int instanceSeed, int phraseCounter, int minSteps, int maxSteps)
     {
-        const int bound = rangeSteps < 0 ? -rangeSteps : rangeSteps;
-        if (bound == 0)
-            return 0;
+        const int lo = juce::jlimit (-16, 16, juce::jmin (minSteps, maxSteps));
+        const int hi = juce::jlimit (-16, 16, juce::jmax (minSteps, maxSteps));
+        if (lo == hi)
+            return lo;
 
         const float unit = hashUnit (instanceSeed, phraseCounter, 4);   // salt 4
-        const int span = 2 * bound + 1;
+        const int span = hi - lo + 1;
         const int offset = juce::jlimit (0, span - 1, static_cast<int> (unit * static_cast<float> (span)));
-        return -bound + offset;
+        return lo + offset;
     }
 
-    float resolveRandomLengthPercent (int instanceSeed, int phraseCounter, float ceilingPercent)
+    float resolveRandomLengthPercent (int instanceSeed, int phraseCounter, float minPercent, float maxPercent)
     {
-        const float ceiling = juce::jlimit (1.0f, 100.0f, ceilingPercent);
-        if (ceiling <= 1.0f)
-            return 1.0f;
+        const float lo = juce::jlimit (1.0f, 100.0f, juce::jmin (minPercent, maxPercent));
+        const float hi = juce::jlimit (1.0f, 100.0f, juce::jmax (minPercent, maxPercent));
+        if (hi - lo < 1e-6f)
+            return lo;
 
         const float unit = hashUnit (instanceSeed, phraseCounter, 5);   // salt 5
-        return juce::jlimit (1.0f, 100.0f, 1.0f + unit * (ceiling - 1.0f));
+        return juce::jlimit (1.0f, 100.0f, lo + unit * (hi - lo));
     }
 
-    float resolveRandomStretchPercent (int instanceSeed, int phraseCounter, float boundPercent)
+    float resolveRandomStretchPercent (int instanceSeed, int phraseCounter, float minPercent, float maxPercent)
     {
-        const float bound = juce::jlimit (25.0f, 400.0f, boundPercent);
-        const float diff = bound > 100.0f ? (bound - 100.0f) : (100.0f - bound);
-        if (diff < 1e-6f)
-            return 100.0f;
+        const float lo = juce::jlimit (25.0f, 400.0f, juce::jmin (minPercent, maxPercent));
+        const float hi = juce::jlimit (25.0f, 400.0f, juce::jmax (minPercent, maxPercent));
+        if (hi - lo < 1e-6f)
+            return lo;
 
-        const float lo = juce::jmin (100.0f, bound);
-        const float hi = juce::jmax (100.0f, bound);
         const float unit = hashUnit (instanceSeed, phraseCounter, 6);   // salt 6
         return lo + unit * (hi - lo);
     }
@@ -631,47 +632,42 @@ namespace odly
         return best;
     }
 
-    float resolveRandomQuantizedStretchPercent (int instanceSeed, int phraseCounter, float boundPercent)
+    float resolveRandomQuantizedStretchPercent (int instanceSeed, int phraseCounter, float minPercent, float maxPercent)
     {
-        const float bound = juce::jlimit (25.0f, 400.0f, boundPercent);
-        const float diff = bound > 100.0f ? (bound - 100.0f) : (100.0f - bound);
-        if (diff < 1e-6f)
-            return 100.0f;
-
-        const float lo = juce::jmin (100.0f, bound);
-        const float hi = juce::jmax (100.0f, bound);
+        const float lo = juce::jlimit (25.0f, 400.0f, juce::jmin (minPercent, maxPercent));
+        const float hi = juce::jlimit (25.0f, 400.0f, juce::jmax (minPercent, maxPercent));
 
         std::vector<float> candidates;
         for (float r : quantizedStretchRatios())
             if (r >= lo - 1e-3f && r <= hi + 1e-3f)
                 candidates.push_back (r);
         if (candidates.empty())
-            candidates.push_back (100.0f);
+            candidates.push_back (snapToQuantizedStretch ((lo + hi) * 0.5f));   // no legal ratio in range - nearest one to the range's own midpoint, never silently outside the vocabulary
 
         const juce::uint32 h = fnv1aHash (instanceSeed, phraseCounter, 7);   // salt 7
         return candidates[h % static_cast<juce::uint32> (candidates.size())];
     }
 
-    int resolveRandomHoldBars (int instanceSeed, int phraseCounter, int ceilingBars)
+    int resolveRandomHoldBars (int instanceSeed, int phraseCounter, int minBars, int maxBars)
     {
-        const int ceiling = juce::jlimit (1, 16, ceilingBars);
-        if (ceiling <= 1)
-            return 1;
+        const int lo = juce::jlimit (1, 16, juce::jmin (minBars, maxBars));
+        const int hi = juce::jlimit (1, 16, juce::jmax (minBars, maxBars));
+        if (lo == hi)
+            return lo;
 
         const float unit = hashUnit (instanceSeed, phraseCounter, 8);   // salt 8
-        const int offset = juce::jlimit (0, ceiling - 1, static_cast<int> (unit * static_cast<float> (ceiling)));
-        return 1 + offset;
+        const int span = hi - lo + 1;
+        const int offset = juce::jlimit (0, span - 1, static_cast<int> (unit * static_cast<float> (span)));
+        return lo + offset;
     }
 
-    float resolveRandomIntervalPercent (int instanceSeed, int phraseCounter, float boundPercent)
+    float resolveRandomIntervalPercent (int instanceSeed, int phraseCounter, float minPercent, float maxPercent)
     {
-        const float bound = juce::jlimit (0.0f, 300.0f, boundPercent);
-        const float diff = bound > 100.0f ? (bound - 100.0f) : (100.0f - bound);
-        if (diff < 1e-6f)
-            return 100.0f;
+        const float lo = juce::jlimit (0.0f, 300.0f, juce::jmin (minPercent, maxPercent));
+        const float hi = juce::jlimit (0.0f, 300.0f, juce::jmax (minPercent, maxPercent));
+        if (hi - lo < 1e-6f)
+            return lo;
 
-        const float lo = juce::jmin (100.0f, bound);
-        const float hi = juce::jmax (100.0f, bound);
         const float unit = hashUnit (instanceSeed, phraseCounter, 9);   // salt 9
         return lo + unit * (hi - lo);
     }

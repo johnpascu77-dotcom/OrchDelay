@@ -62,6 +62,7 @@ private:
     juce::Label holdBarsLabel;
     juce::Slider holdBarsSlider;
     juce::ToggleButton holdBarsRandomButton;
+    juce::Slider holdBarsRangeSlider;   // two-thumb min/max, shown instead of holdBarsSlider when Random is on (Docs SS32)
 
     juce::Label overlapModeLabel;
     juce::ComboBox overlapModeBox;
@@ -98,23 +99,28 @@ private:
     juce::Label transposeLabel;
     juce::Slider transposeSlider;
     juce::ToggleButton transposeRandomButton;   // "Random" - see odly::resolveRandomTransposeSemitones
+    juce::Slider transposeRangeSlider;
 
     juce::Label rotationLabel;
     juce::Slider rotationSlider;
     juce::ToggleButton rotationRandomButton;
+    juce::Slider rotationRangeSlider;
 
     juce::Label lengthLabel;
     juce::Slider lengthSlider;
     juce::ToggleButton lengthRandomButton;
+    juce::Slider lengthRangeSlider;
 
     juce::Label stretchLabel;
     juce::Slider stretchSlider;
     juce::ToggleButton stretchRandomButton;
     juce::ToggleButton stretchQuantizedButton;
+    juce::Slider stretchRangeSlider;
 
     juce::Label intervalLabel;
     juce::Slider intervalSlider;
     juce::ToggleButton intervalRandomButton;
+    juce::Slider intervalRangeSlider;
 
     juce::Label linkHubLabel;
     juce::ToggleButton linkHubButton;
@@ -151,6 +157,41 @@ private:
     // time, so a new control added later only needs one push_back, not a
     // second visibility-toggle site to remember.
     std::vector<juce::Component*> mainPanelComponents;
+
+    // Random-range two-thumb sliders (Docs SS32): each of the 6 Random-
+    // capable parameters (Hold Bars, Transpose, Rotation, Length, Stretch,
+    // Interval Scale) has its own dedicated Min/Max APVTS parameter pair,
+    // used only when that parameter's own "Random" toggle is on. A
+    // TwoValueHorizontal juce::Slider has no AudioProcessorValueTreeState
+    // attachment helper (attachments are single-value only), so each is
+    // wired by hand: onValueChange below pushes the two thumb positions
+    // into the Min/Max parameters (normalised via convertTo0to1, since
+    // RangedAudioParameter::setValueNotifyingHost expects 0-1, not the real
+    // units), and timerCallback below pulls the current parameter values
+    // back into the slider's own display whenever it isn't actively being
+    // dragged (so an undo, a project reload, or a Randomize-style external
+    // change is reflected without a second, parallel sync mechanism).
+    // Occupies the exact same layout slot as its corresponding manual
+    // slider, shown instead of it (never alongside) when Random is on -
+    // see setupRandomRangeBinding and the visibility pass in timerCallback.
+    struct RandomRangeBinding
+    {
+        juce::Slider* rangeSlider = nullptr;
+        juce::Slider* manualSlider = nullptr;
+        juce::ToggleButton* randomButton = nullptr;
+        juce::Label* label = nullptr;
+        juce::String baseLabelText;   // restored to the label when Random is off
+        bool isPercent = true;        // display formatting: "50.0%" vs a plain integer
+        std::atomic<float>* minParamRaw = nullptr;
+        std::atomic<float>* maxParamRaw = nullptr;
+        juce::RangedAudioParameter* minParam = nullptr;
+        juce::RangedAudioParameter* maxParam = nullptr;
+    };
+    std::vector<RandomRangeBinding> randomRangeBindings;
+    void setupRandomRangeBinding (juce::Slider& rangeSlider, juce::Slider& manualSlider,
+                                  juce::ToggleButton& randomButton, juce::Label& label,
+                                  bool isPercent,
+                                  const juce::String& minParamId, const juce::String& maxParamId);
 
     juce::Label statusLabel;   // transport-present / pending-phrase-count, refreshed via Timer
 
