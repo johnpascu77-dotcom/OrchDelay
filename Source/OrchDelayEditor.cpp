@@ -18,7 +18,24 @@ namespace
 OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
-    setSize (1040, 860);
+    // Fixed at 1040x860 with no way to resize used to be fine, but this
+    // session added a full row (matrix button), an Instance Label field,
+    // and 6 range sliders without ever re-checking against a real screen -
+    // a live user's own 1536x864 logical display leaves barely any margin
+    // for the window's own titlebar and the OS taskbar once you add 860px
+    // of content height, and with no resize capability at all there was no
+    // way to work around it. Trimmed the default height a little and made
+    // the window genuinely resizable (bounded, so it can't become unusably
+    // small) as the durable fix - works for this screen and any other.
+    // Tightened row spacing (8px -> 5px) and the status readout's own font/
+    // height buy back real space, but a screen this size (1536x864 logical)
+    // simply doesn't have room for the full content height AND comfortable
+    // OS chrome margin at any reasonable default - resizability (below) is
+    // the actual fix, not this specific number; 820 just starts closer to
+    // right than the original 860 did.
+    setResizable (true, true);
+    setResizeLimits (900, 650, 1400, 1000);
+    setSize (1040, 820);
 
     titleLabel.setText ("OrchDelay", juce::dontSendNotification);
     titleLabel.setJustificationType (juce::Justification::centred);
@@ -333,7 +350,7 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
 
     statusLabel.setJustificationType (juce::Justification::centred);
     statusLabel.setColour (juce::Label::textColourId, kMuted);
-    statusLabel.setFont (juce::FontOptions (13.0f));
+    statusLabel.setFont (juce::FontOptions (11.0f));
     addAndMakeVisible (statusLabel);
 
     auto& state = audioProcessor.getParameters();
@@ -459,7 +476,7 @@ void OrchDelayAudioProcessorEditor::resized()
     // --- Left column: capture & timing ---------------------------------
     captureModeLabel.setBounds (leftRow (18));
     captureModeBox.setBounds (leftRow());
-    leftArea.removeFromTop (8);
+    leftArea.removeFromTop (5);
 
     holdBarsLabel.setBounds (leftRow (18));
     auto holdBarsRow = leftRow();
@@ -467,53 +484,53 @@ void OrchDelayAudioProcessorEditor::resized()
     holdBarsRow.removeFromRight (8);
     holdBarsSlider.setBounds (holdBarsRow);
     holdBarsRangeSlider.setBounds (holdBarsRow);
-    leftArea.removeFromTop (8);
+    leftArea.removeFromTop (5);
 
     overlapModeLabel.setBounds (leftRow (18));
     overlapModeBox.setBounds (leftRow());
-    leftArea.removeFromTop (8);
+    leftArea.removeFromTop (5);
 
     phraseGapLabel.setBounds (leftRow (18));
     phraseGapSlider.setBounds (leftRow());
-    leftArea.removeFromTop (8);
+    leftArea.removeFromTop (5);
 
     minimumInterestLabel.setBounds (leftRow (18));
     minimumInterestSlider.setBounds (leftRow());
-    leftArea.removeFromTop (8);
+    leftArea.removeFromTop (5);
 
     callbackProbabilityLabel.setBounds (leftRow (18));
     callbackProbabilitySlider.setBounds (leftRow());
-    leftArea.removeFromTop (8);
+    leftArea.removeFromTop (5);
 
     autonomousFireLabel.setBounds (leftRow (18));
     autonomousFireSlider.setBounds (leftRow());
-    leftArea.removeFromTop (8);
+    leftArea.removeFromTop (5);
 
     captureBankLabel.setBounds (leftRow (18));
     auto captureBankRow = leftRow();
     clearBankButton.setBounds (captureBankRow.removeFromRight (90));
     captureBankRow.removeFromRight (8);
     captureBankBox.setBounds (captureBankRow);
-    leftArea.removeFromTop (8);
+    leftArea.removeFromTop (5);
 
     activeBankLabel.setBounds (leftRow (18));
     activeBankBox.setBounds (leftRow());
-    leftArea.removeFromTop (8);
+    leftArea.removeFromTop (5);
 
     recencyBiasLabel.setBounds (leftRow (18));
     recencyBiasSlider.setBounds (leftRow());
-    leftArea.removeFromTop (8);
+    leftArea.removeFromTop (5);
 
     instanceSeedLabel.setBounds (leftRow (18));
     auto seedRow = leftRow();
     randomizeSeedButton.setBounds (seedRow.removeFromRight (90));
     seedRow.removeFromRight (8);
     instanceSeedSlider.setBounds (seedRow);
-    leftArea.removeFromTop (8);
+    leftArea.removeFromTop (5);
 
     instanceLabelLabel.setBounds (leftRow (18));
     instanceLabelEditor.setBounds (leftRow());
-    leftArea.removeFromTop (8);
+    leftArea.removeFromTop (5);
 
     // --- Right column: transform -----------------------------------------
     restlessnessLabel.setBounds (rightRow (18));
@@ -521,11 +538,11 @@ void OrchDelayAudioProcessorEditor::resized()
     contentAwareWeightingButton.setBounds (restlessnessRow.removeFromRight (110));
     restlessnessRow.removeFromRight (8);
     restlessnessSlider.setBounds (restlessnessRow);
-    rightArea.removeFromTop (8);
+    rightArea.removeFromTop (5);
 
     transformLabel.setBounds (rightRow (18));
     transformBox.setBounds (rightRow());
-    rightArea.removeFromTop (8);
+    rightArea.removeFromTop (5);
 
     transposeLabel.setBounds (rightRow (18));
     auto transposeRow = rightRow();
@@ -533,7 +550,7 @@ void OrchDelayAudioProcessorEditor::resized()
     transposeRow.removeFromRight (8);
     transposeSlider.setBounds (transposeRow);
     transposeRangeSlider.setBounds (transposeRow);
-    rightArea.removeFromTop (8);
+    rightArea.removeFromTop (5);
 
     rotationLabel.setBounds (rightRow (18));
     auto rotationRow = rightRow();
@@ -541,7 +558,7 @@ void OrchDelayAudioProcessorEditor::resized()
     rotationRow.removeFromRight (8);
     rotationSlider.setBounds (rotationRow);
     rotationRangeSlider.setBounds (rotationRow);
-    rightArea.removeFromTop (8);
+    rightArea.removeFromTop (5);
 
     lengthLabel.setBounds (rightRow (18));
     auto lengthRow = rightRow();
@@ -549,7 +566,7 @@ void OrchDelayAudioProcessorEditor::resized()
     lengthRow.removeFromRight (8);
     lengthSlider.setBounds (lengthRow);
     lengthRangeSlider.setBounds (lengthRow);
-    rightArea.removeFromTop (8);
+    rightArea.removeFromTop (5);
 
     stretchLabel.setBounds (rightRow (18));
     auto stretchRow = rightRow();
@@ -559,7 +576,7 @@ void OrchDelayAudioProcessorEditor::resized()
     stretchRow.removeFromRight (8);
     stretchSlider.setBounds (stretchRow);
     stretchRangeSlider.setBounds (stretchRow);
-    rightArea.removeFromTop (8);
+    rightArea.removeFromTop (5);
 
     intervalLabel.setBounds (rightRow (18));
     auto intervalRow = rightRow();
@@ -567,7 +584,7 @@ void OrchDelayAudioProcessorEditor::resized()
     intervalRow.removeFromRight (8);
     intervalSlider.setBounds (intervalRow);
     intervalRangeSlider.setBounds (intervalRow);
-    rightArea.removeFromTop (8);
+    rightArea.removeFromTop (5);
 
     // --- Right column, continued: cross-instance broadcast (Docs SS27) ---
     linkHubLabel.setBounds (rightRow (18));
@@ -575,22 +592,22 @@ void OrchDelayAudioProcessorEditor::resized()
     clearRemoteButton.setBounds (linkHubRow.removeFromRight (100));
     linkHubRow.removeFromRight (8);
     linkHubButton.setBounds (linkHubRow);
-    rightArea.removeFromTop (8);
+    rightArea.removeFromTop (5);
 
     broadcastChannelLabel.setBounds (rightRow (18));
     broadcastChannelSlider.setBounds (rightRow());
-    rightArea.removeFromTop (8);
+    rightArea.removeFromTop (5);
 
     listenChannelLabel.setBounds (rightRow (18));
     listenChannelSlider.setBounds (rightRow());
-    rightArea.removeFromTop (8);
+    rightArea.removeFromTop (5);
 
     // Status goes directly below whichever column ended up taller (today,
     // the left one) - never pinned to the window's own declared bottom edge,
     // see this function's own comment above `fullWidthArea` for why.
     const int contentBottom = juce::jmax (leftArea.getY(), rightArea.getY());
-    juce::Rectangle<int> statusArea (fullWidthArea.getX(), contentBottom + 8,
-                                     fullWidthArea.getWidth(), 82);
+    juce::Rectangle<int> statusArea (fullWidthArea.getX(), contentBottom + 6,
+                                     fullWidthArea.getWidth(), 68);
     statusLabel.setBounds (statusArea);
 
     // Connection Matrix (Docs SS31) fills the exact same real estate the two

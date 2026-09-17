@@ -1556,3 +1556,27 @@ Rebuilt+reinstalled. Verified visually via the same live 2-instance Standalone s
 click-to-wire confirmation above: with Alto (bc2) and Beta (bc1) both connected, the matrix correctly
 showed "Beta" before "Alto" (ascending broadcast channel) with real names on both axes, no bare numbers
 anywhere. Build ~2026-09-17.
+
+**Confirmed silent-node cause on the user's real cascade, same session**: with the matrix now readable,
+the user reported Viola (and therefore Violoncello downstream of it) still silent despite correct wiring.
+Asked them to check Violin 2's own status line rather than guess again - `cap 0 cls 0` (alongside
+`fire 30`, i.e. genuinely active playback) confirmed the exact structural limitation named when click-to-
+wire shipped: Violin 2 has no live MIDI of its own reaching it, so despite happily playing back what it
+receives from Violin 1, it has nothing NEW to hand to Viola - correct wiring can't fix that. This is the
+still-deferred relay/re-broadcast feature's own use case exactly; not built yet, awaiting the user's
+go-ahead.
+
+**Standalone window sizing (same session)**: separately, the user reported the Standalone window's status
+readout was cut off - "the UI is slightly too tall than the screen height." Root cause: `setSize (1040,
+860)` with NO `setResizable` call at all - a hard-fixed window, and the user's own real screen (1536x864
+logical) leaves the fixed 860px content height almost no room for the window's own titlebar plus the OS
+taskbar. This grew organically all session (Connection Matrix button, Instance Label field, 6 SS32 range
+sliders) with nobody re-checking it against an actual screen until it broke. Fixed: `setResizable (true,
+true)` + `setResizeLimits (900, 650, 1400, 1000)` (the real, durable fix - the user, or a future one on a
+different screen, can now resize to whatever actually fits, which was simply impossible before), plus
+tightened the two-column layout's inter-row spacing (8px -> 5px, all 22 occurrences) and the status
+readout's own font/height (13pt/82px -> 11pt/68px) to buy back real space, and trimmed the default height
+860 -> 820 as a better (not perfect - this screen genuinely has no comfortable margin at any default)
+starting point. Verified via Standalone: content lays out correctly and the status text displays in full
+once the window is given more room (tested by resizing to 1350x1050), confirming resizing itself works
+end-to-end, not just declared.
