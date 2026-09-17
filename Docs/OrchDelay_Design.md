@@ -1634,3 +1634,29 @@ heartbeat mechanisms could be tested with pure UI automation. The wire-level mec
 (the `"phrase"` message shape, the generation-counter publish pattern, Hub fan-out) are the SAME
 infrastructure already live-confirmed working for captures and click-to-wire earlier this session - real
 confidence, but not a substitute for the user's own real chain test.
+
+## SS36. Quantized Stretch range handles snap to the legal ratios themselves
+
+Direct follow-up, same session: user confirmed the Random+Quantized Stretch range behaves correctly (the
+draw only ever produces a value from `odly::quantizedStretchRatios()` falling inside whatever range the
+two handles define, regardless of where exactly the handles sit) - then asked for the natural next step:
+"in quantized mode, have the handles snap to these fixed values, instead of being 'somewhere near'." Fair
+point sharpened by the confirmation itself - since ONLY the legal ratios inside the range matter at all, a
+handle rendered at "201%" instead of exactly "200%" was cosmetically misleading about what the range
+actually contains, on top of being fiddly to land on precisely by feel.
+
+**Fix**: `stretchRangeSlider`'s own `onValueChange` (set up generically by `setupRandomRangeBinding` for
+all 6 Random-range sliders, Docs SS32) is overridden immediately after that call, specifically for Stretch
+only - Quantize is a Stretch-only concept none of the other 5 parameters share, so this stays out of the
+shared helper rather than growing a Stretch-specific branch into otherwise-generic code. When Quantize is
+on, each dragged value snaps through the EXISTING `odly::snapToQuantizedStretch` (already used for the
+single, non-random Stretch slider's own Quantize behavior) before being written back to both the slider's
+own visual position (`setMinAndMaxValues`, so the handle itself visibly jumps to the legal value, not just
+the stored parameter) and the APVTS parameter. Fires on every `onValueChange` during a drag, not only on
+release, for an actual magnetic-snap feel rather than a jarring teleport once the mouse lifts. When
+Quantize is off, falls through to the original continuous behavior unchanged.
+
+Verified via Standalone: with Random and Quantize both on, dragging the min handle toward ~110% snapped it
+to exactly 100% (the nearest legal ratio) both visually and in the live "Stretch (%) - X% to Y%
+(quantized)" label text. No `odly::` changes - purely an editor-side interaction fix reusing an already-
+tested function, so no new test coverage needed (173 assertions unaffected). Build ~2026-09-17.

@@ -239,6 +239,41 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     setupRandomRangeBinding (stretchRangeSlider, stretchSlider, stretchRandomButton, stretchLabel,
                              true, "stretchRandomMin", "stretchRandomMax");
 
+    // Quantize-aware handle snapping (Docs SS36) - overrides the generic
+    // binding's own onValueChange set up just above, rather than teaching
+    // setupRandomRangeBinding itself about Quantize (a Stretch-only concept
+    // none of the other 5 Random-range parameters share). When Quantize is
+    // on, the actual Random draw only ever produces one of
+    // odly::quantizedStretchRatios() regardless of where the handles sit
+    // (see resolveRandomQuantizedStretchPercent) - a handle resting "near"
+    // a legal value rather than exactly on it was cosmetically misleading
+    // about what the range genuinely contains, and precisely dragging to an
+    // exact percentage by feel alone is fiddly. Snaps continuously while
+    // dragging (every onValueChange, not just on release) for an actual
+    // magnetic-snap feel rather than a jarring teleport on mouse-up.
+    {
+        auto& state = audioProcessor.getParameters();
+        auto* minParam = dynamic_cast<juce::RangedAudioParameter*> (state.getParameter ("stretchRandomMin"));
+        auto* maxParam = dynamic_cast<juce::RangedAudioParameter*> (state.getParameter ("stretchRandomMax"));
+        stretchRangeSlider.onValueChange = [this, minParam, maxParam]
+        {
+            float lo = static_cast<float> (stretchRangeSlider.getMinValue());
+            float hi = static_cast<float> (stretchRangeSlider.getMaxValue());
+
+            if (stretchQuantizedButton.getToggleState())
+            {
+                lo = odly::snapToQuantizedStretch (lo);
+                hi = odly::snapToQuantizedStretch (hi);
+                stretchRangeSlider.setMinAndMaxValues (lo, hi, juce::dontSendNotification);
+            }
+
+            if (minParam != nullptr)
+                minParam->setValueNotifyingHost (minParam->convertTo0to1 (lo));
+            if (maxParam != nullptr)
+                maxParam->setValueNotifyingHost (maxParam->convertTo0to1 (hi));
+        };
+    }
+
     setupLabel (intervalLabel, "Interval Scale (%)");
     addAndMakeVisible (intervalLabel);
     setupSlider (intervalSlider);
