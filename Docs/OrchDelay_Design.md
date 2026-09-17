@@ -1320,6 +1320,34 @@ machine) to confirm a second instance's heartbeat actually arrives at the hub an
   the same conversation, before the matrix - re-broadcasting Remote-drawn/Autonomous-Fire material outward,
   not just first-hand captures) - not built this session, no code changes for it.
 
+**SS31 addendum - 3 real usability findings from the FIRST look at the matrix (same session)**:
+
+1. **No way back.** `matrixTabButton` originally lived down near Listen Channel, inside the exact same
+   area `matrixView` covers once shown - and `matrixView`, added as a child AFTER the button (so it draws
+   on top), fully occluded and ate its clicks the moment the matrix opened. There was no way back to the
+   main view short of unchecking Broadcast Hub. Fixed by moving the button onto the Bypass row, ABOVE
+   where `fullWidthArea`/`matrixView`'s own bounds are even computed - structurally impossible to overlap
+   again, not just repositioned. Its own text now flips between "Connection Matrix" and "< Back to Main"
+   in `setShowingMatrix` so its purpose is always legible.
+2. **User instinctively clicked the cells**, expecting them to wire up a connection - direct, valuable
+   confirmation that click-to-wire (already flagged above as a deliberate follow-up, not a declined idea)
+   is genuinely the expected interaction, not a nice-to-have. Left it read-only for now per the trust-
+   boundary reasoning above, but the bottom legend now says so explicitly ("Read-only for now...") instead
+   of leaving it to be discovered by a click that does nothing.
+3. **Stretch's Random-mode boundaries were invisible.** User had been trying to replicate them with an
+   external Bitwig LFO automating the same parameter, going only on the automation knob's own visual
+   position - "I had only the optical approximation... I don't know the exact corresponding values."
+   `odly::resolveRandomStretchPercent`/`resolveRandomQuantizedStretchPercent` already fully determine the
+   real draw range from the slider's own current value alone (`lo = min(100, bound)`, `hi = max(100,
+   bound)` - always anchored at 100%, never a fixed-width window around some other centre), so this needed
+   no new backend logic - just surfacing it. `stretchLabel`'s own text now reads "Stretch (%) - range
+   50.0% to 100.0%" (appending "(quantized)" when Quantize is also on), recomputed live in `timerCallback`
+   from `stretchSlider`/`stretchRandomButton`/`stretchQuantizedButton`'s own current UI state - the same
+   numbers an external LFO's own min/max would need to match exactly.
+
+Rebuilt+reinstalled, verified visually via Standalone (button reachable and round-trips correctly between
+views; Stretch range label updates live and survives a matrix round-trip). Build ~2026-09-17.
+
 ## SS30. Wait busy-gating was instant-by-instant, not phrase-envelope-aware - genuine cross-phrase overlap
 
 Follow-up to SS29, same session: the user asked, with a concrete example, how a deliberately simple

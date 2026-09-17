@@ -372,7 +372,18 @@ void OrchDelayAudioProcessorEditor::resized()
     buildLabel.setBounds (area.removeFromTop (18));
     area.removeFromTop (12);
 
-    bypassButton.setBounds (area.removeFromTop (28));
+    // matrixTabButton lives on this same row, ABOVE where matrixView's own
+    // bounds start below - deliberately, not just for spacing. It used to
+    // sit down near Listen Channel, inside the same area matrixView covers
+    // when shown; matrixView is added as a child AFTER matrixTabButton (so
+    // it draws on top) and fully occluded/ate its clicks, leaving no way
+    // back to the main view once the matrix was open. Placing it here, in
+    // the part of the layout captured BEFORE fullWidthArea/matrixView's own
+    // bounds exist, makes that structurally impossible to regress into.
+    auto bypassRow = area.removeFromTop (28);
+    matrixTabButton.setBounds (bypassRow.removeFromRight (160));
+    bypassRow.removeFromRight (8);
+    bypassButton.setBounds (bypassRow);
     area.removeFromTop (12);
 
     // Status is placed AFTER the columns below (see the bottom of this
@@ -519,12 +530,6 @@ void OrchDelayAudioProcessorEditor::resized()
     listenChannelSlider.setBounds (rightRow());
     rightArea.removeFromTop (8);
 
-    // Only actually placed where it'll be seen/clicked when Broadcast Hub is
-    // checked (timerCallback controls visibility) - laid out unconditionally
-    // here regardless, harmless when hidden.
-    matrixTabButton.setBounds (rightRow());
-    rightArea.removeFromTop (8);
-
     // Status goes directly below whichever column ended up taller (today,
     // the left one) - never pinned to the window's own declared bottom edge,
     // see this function's own comment above `fullWidthArea` for why.
@@ -543,6 +548,7 @@ void OrchDelayAudioProcessorEditor::setShowingMatrix (bool shouldShow)
 {
     showingMatrix = shouldShow;
     matrixTabButton.setToggleState (shouldShow, juce::dontSendNotification);
+    matrixTabButton.setButtonText (shouldShow ? "< Back to Main" : "Connection Matrix");
 
     for (auto* c : mainPanelComponents)
         c->setVisible (! shouldShow);
@@ -655,8 +661,8 @@ void OrchDelayAudioProcessorEditor::ConnectionMatrixView::paint (juce::Graphics&
 
     g.setColour (kMuted.withAlpha (0.7f));
     g.setFont (juce::FontOptions (11.0f));
-    g.drawText ("Rows = source (Broadcast Channel)  \xc2\xb7  Columns = destination (Listen Channel), numbered "
-               "top to bottom same order as rows  \xc2\xb7  orange = two sources sharing one channel",
+    g.drawText ("Read-only for now - rows and columns reflect each instance's OWN Broadcast/Listen "
+               "Channel, set at that instance itself  \xc2\xb7  orange = two sources sharing one channel",
                getLocalBounds().removeFromBottom (16), juce::Justification::centred);
 }
 
@@ -709,6 +715,30 @@ void OrchDelayAudioProcessorEditor::timerCallback()
 
         matrixView.setRows (std::move (rows));
         return;   // nothing else on screen to refresh while the matrix is up
+    }
+
+    // Random Stretch draws uniformly from [min(100,bound), max(100,bound)]
+    // where `bound` is the slider's own current value (see
+    // odly::resolveRandomStretchPercent/resolveRandomQuantizedStretchPercent's
+    // own doc comments) - always anchored at 100%, never a fixed-width
+    // window around some other centre. Surfaced directly on the label so an
+    // external automation source (e.g. a Bitwig LFO driving this same
+    // parameter to fake continuous randomization) can be set to the exact
+    // real boundary instead of an eyeballed approximation - requested
+    // directly by the user after trying exactly that.
+    if (stretchRandomButton.getToggleState())
+    {
+        const float bound = static_cast<float> (stretchSlider.getValue());
+        const float lo = juce::jmin (100.0f, bound);
+        const float hi = juce::jmax (100.0f, bound);
+        juce::String text = "Stretch (%) - range " + juce::String (lo, 1) + "% to " + juce::String (hi, 1) + "%";
+        if (stretchQuantizedButton.getToggleState())
+            text += " (quantized)";
+        stretchLabel.setText (text, juce::dontSendNotification);
+    }
+    else
+    {
+        stretchLabel.setText ("Stretch (%)", juce::dontSendNotification);
     }
 
     const bool haveTransport = audioProcessor.hasTransportForUi();
