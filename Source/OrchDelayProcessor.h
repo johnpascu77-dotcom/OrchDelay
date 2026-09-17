@@ -110,6 +110,17 @@ public:
     // numbering).
     void pushIncomingRemotePhrase (const odly::MemoryEntry& entry);
 
+    // Click-to-wire (Docs SS33): called from OrchDelayLink's own connection
+    // thread when a "setListen" command arrives from the hub - marshals the
+    // actual parameter write onto the message thread (juce::MessageManager::
+    // callAsync, weak-ref guarded in case this processor is torn down before
+    // the async callback runs - e.g. the plugin removed right as a command
+    // arrives), matching the general JUCE convention that
+    // setValueNotifyingHost should be called from the message thread, and
+    // the same async-dispatch pattern OrchDelayLink::onHubClientGone already
+    // uses for its own message-thread handoff.
+    void setListenChannelFromRemote (int channel);
+
     // Free-text identity shown in the Connection Matrix (Docs SS31) instead
     // of a bare Instance Seed number - not an APVTS parameter (no clean
     // free-text parameter shape, same reasoning as randomizeInstanceSeed
@@ -352,5 +363,6 @@ private:
     // differently-timed "clear" path).
     void drainAndSilence (juce::MidiBuffer& output, int samplePosition);
 
+    JUCE_DECLARE_WEAK_REFERENCEABLE (OrchDelayAudioProcessor)
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (OrchDelayAudioProcessor)
 };

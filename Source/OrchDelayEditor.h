@@ -39,12 +39,35 @@ private:
             int broadcastChannel = 0;
             int listenChannel = 0;
             bool isSelf = false;
+
+            // Opaque handle for OrchDelayLink::sendSetListenChannel - see
+            // that struct field's own doc comment in OrchDelayLink.h. 0 for
+            // the self row (the editor writes its own parameter directly,
+            // no network round-trip needed).
+            juce::int64 connectionId = 0;
         };
 
         void setRows (std::vector<Row> newRows);
+        const std::vector<Row>& getRows() const { return rows; }
         void paint (juce::Graphics&) override;
+        void mouseDown (const juce::MouseEvent&) override;
+
+        // Click-to-wire (Docs SS33): fired with (sourceRowIndex,
+        // destColumnIndex) when the user clicks a genuinely actionable cell
+        // (off the diagonal, source row actually broadcasting on some
+        // channel > 0) - never fired for a click that couldn't mean
+        // anything. The editor owns turning that into an actual parameter
+        // change (self vs remote destination); this view only reports
+        // geometry, it never touches audioProcessor or the Link itself.
+        std::function<void (int, int)> onCellClicked;
 
     private:
+        // Shared by paint() and mouseDown() so hit-testing can never drift
+        // out of sync with what's actually drawn - computed fresh each call
+        // (cheap: a handful of divisions), not cached.
+        struct GridGeometry { int leftGutter, topStrip, cell, gridX, gridY, n; };
+        GridGeometry computeGridGeometry() const;
+
         std::vector<Row> rows;
     };
 

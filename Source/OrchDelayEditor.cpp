@@ -295,6 +295,40 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
 
     addChildComponent (matrixView);   // starts hidden - shown via setShowingMatrix
 
+    // Click-to-wire (Docs SS33): sourceIdx/destIdx are positions in the
+    // SAME row list matrixView just rendered from (getRows()), which is
+    // always the most recent snapshot timerCallback built - never stale by
+    // more than one tick, since the matrix only refreshes while visible and
+    // a click can only happen while it's visible and on-screen.
+    matrixView.onCellClicked = [this] (int sourceIdx, int destIdx)
+    {
+        const auto& rows = matrixView.getRows();
+        if (sourceIdx < 0 || destIdx < 0
+            || sourceIdx >= static_cast<int> (rows.size()) || destIdx >= static_cast<int> (rows.size()))
+            return;
+
+        const auto& source = rows[static_cast<size_t> (sourceIdx)];
+        const auto& dest = rows[static_cast<size_t> (destIdx)];
+
+        // Already connected (this exact source feeds this exact
+        // destination) - click again to disconnect. Otherwise connect,
+        // which naturally supersedes whatever the destination was
+        // PREVIOUSLY listening to (Listen Channel is single-valued) with no
+        // separate action needed - that old cell just stops being lit.
+        const bool alreadyConnected = source.broadcastChannel > 0 && source.broadcastChannel == dest.listenChannel;
+        const int newChannel = alreadyConnected ? 0 : source.broadcastChannel;
+
+        if (dest.isSelf)
+        {
+            if (auto* param = dynamic_cast<juce::RangedAudioParameter*> (audioProcessor.getParameters().getParameter ("listenChannel")))
+                param->setValueNotifyingHost (param->convertTo0to1 (static_cast<float> (newChannel)));
+        }
+        else
+        {
+            audioProcessor.getLink().sendSetListenChannel (dest.connectionId, newChannel);
+        }
+    };
+
     statusLabel.setJustificationType (juce::Justification::centred);
     statusLabel.setColour (juce::Label::textColourId, kMuted);
     statusLabel.setFont (juce::FontOptions (13.0f));
@@ -650,6 +684,42 @@ void OrchDelayAudioProcessorEditor::ConnectionMatrixView::setRows (std::vector<R
     repaint();
 }
 
+OrchDelayAudioProcessorEditor::ConnectionMatrixView::GridGeometry
+    OrchDelayAudioProcessorEditor::ConnectionMatrixView::computeGridGeometry() const
+{
+    const int n = static_cast<int> (rows.size());
+    const int leftGutter = 200;
+    const int topStrip = 26;
+
+    const auto gridArea = getLocalBounds().withTrimmedLeft (leftGutter).withTrimmedTop (topStrip);
+    const int cell = juce::jlimit (22, 56, juce::jmin (gridArea.getWidth() / juce::jmax (1, n),
+                                                       gridArea.getHeight() / juce::jmax (1, n)));
+    return { leftGutter, topStrip, cell, leftGutter, topStrip, n };
+}
+
+void OrchDelayAudioProcessorEditor::ConnectionMatrixView::mouseDown (const juce::MouseEvent& e)
+{
+    if (rows.empty())
+        return;
+
+    const auto geo = computeGridGeometry();
+    const int localX = e.x - geo.gridX;
+    const int localY = e.y - geo.gridY;
+    if (localX < 0 || localY < 0 || localX >= geo.n * geo.cell || localY >= geo.n * geo.cell)
+        return;   // click landed outside the grid itself (label gutter, legend, etc.)
+
+    const int destColumn = localX / geo.cell;   // column = destination (Listen Channel)
+    const int sourceRow = localY / geo.cell;    // row = source (Broadcast Channel)
+
+    if (sourceRow == destColumn)
+        return;   // diagonal - an instance "connecting to itself" means nothing
+    if (rows[static_cast<size_t> (sourceRow)].broadcastChannel <= 0)
+        return;   // source isn't broadcasting on anything - nothing a click could wire up
+
+    if (onCellClicked != nullptr)
+        onCellClicked (sourceRow, destColumn);
+}
+
 void OrchDelayAudioProcessorEditor::ConnectionMatrixView::paint (juce::Graphics& g)
 {
     g.fillAll (kBackground);
@@ -663,15 +733,13 @@ void OrchDelayAudioProcessorEditor::ConnectionMatrixView::paint (juce::Graphics&
         return;
     }
 
-    const int n = static_cast<int> (rows.size());
-    const int leftGutter = 200;
-    const int topStrip = 26;
-
-    const auto gridArea = getLocalBounds().withTrimmedLeft (leftGutter).withTrimmedTop (topStrip);
-    const int cell = juce::jlimit (22, 56, juce::jmin (gridArea.getWidth() / juce::jmax (1, n),
-                                                       gridArea.getHeight() / juce::jmax (1, n)));
-    const int gridX = leftGutter;
-    const int gridY = topStrip;
+    const auto geo = computeGridGeometry();
+    const int n = geo.n;
+    const int cell = geo.cell;
+    const int gridX = geo.gridX;
+    const int gridY = geo.gridY;
+    const int leftGutter = geo.leftGutter;
+    const int topStrip = geo.topStrip;
 
     // Row labels (sources) + column index numbers (destinations - see the
     // legend note below for why a bare index, not the full label, up top).
@@ -746,8 +814,8 @@ void OrchDelayAudioProcessorEditor::ConnectionMatrixView::paint (juce::Graphics&
 
     g.setColour (kMuted.withAlpha (0.7f));
     g.setFont (juce::FontOptions (11.0f));
-    g.drawText ("Read-only for now - rows and columns reflect each instance's OWN Broadcast/Listen "
-               "Channel, set at that instance itself  \xc2\xb7  orange = two sources sharing one channel",
+    g.drawText ("Click a cell to connect that row's Broadcast Channel to that column's Listen Channel "
+               "\xc2\xb7 click a lit cell to disconnect  \xc2\xb7 orange = two sources sharing one channel",
                getLocalBounds().removeFromBottom (16), juce::Justification::centred);
 }
 
@@ -795,6 +863,7 @@ void OrchDelayAudioProcessorEditor::timerCallback()
             row.label = status.label;
             row.broadcastChannel = status.broadcastChannel;
             row.listenChannel = status.listenChannel;
+            row.connectionId = status.connectionId;
             rows.push_back (row);
         }
 

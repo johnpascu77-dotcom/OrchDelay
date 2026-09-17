@@ -1057,6 +1057,17 @@ void OrchDelayAudioProcessor::pushIncomingRemotePhrase (const odly::MemoryEntry&
         remoteInboxPending.erase (remoteInboxPending.begin());
 }
 
+void OrchDelayAudioProcessor::setListenChannelFromRemote (int channel)
+{
+    juce::WeakReference<OrchDelayAudioProcessor> weak (this);
+    juce::MessageManager::callAsync ([weak, channel]
+    {
+        if (auto* self = weak.get())
+            if (auto* param = dynamic_cast<juce::RangedAudioParameter*> (self->parameters.getParameter ("listenChannel")))
+                param->setValueNotifyingHost (param->convertTo0to1 (static_cast<float> (channel)));
+    });
+}
+
 juce::String OrchDelayAudioProcessor::getInstanceLabelForUi() const
 {
     std::lock_guard<std::mutex> lock (instanceLabelMutex);

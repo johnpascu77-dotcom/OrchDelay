@@ -38,6 +38,17 @@ namespace
         obj->setProperty ("lc", listenChannel);
         return juce::var (obj);
     }
+
+    // Click-to-wire command (Docs SS33) - unicast, hub to one specific
+    // client, never fanned out. Tells that instance to set its OWN Listen
+    // Channel to `channel` (0 disconnects it).
+    juce::var setListenMessageFrom (int channel)
+    {
+        auto* obj = new juce::DynamicObject();
+        obj->setProperty ("t", "setListen");
+        obj->setProperty ("ch", channel);
+        return juce::var (obj);
+    }
 }
 
 // ===================== connection / server objects =====================
@@ -69,7 +80,20 @@ public:
         if (! juce::JSON::parse (json, parsed).wasOk() || ! parsed.isObject())
             return;
 
-        if (parsed.getProperty ("t", juce::var()).toString() != "phrase")
+        const auto type = parsed.getProperty ("t", juce::var()).toString();
+
+        if (type == "setListen")
+        {
+            // Click-to-wire (Docs SS33): the hub telling THIS instance to
+            // change its own Listen Channel. Applied on the message thread,
+            // never here on the connection's own background thread - see
+            // OrchDelayAudioProcessor::setListenChannelFromRemote's own doc
+            // comment.
+            owner.processor.setListenChannelFromRemote (static_cast<int> (parsed.getProperty ("ch", 0)));
+            return;
+        }
+
+        if (type != "phrase")
             return;
 
         const int listenChannel = owner.processor.getListenChannelForUi();
@@ -329,6 +353,7 @@ void OrchDelayLink::onHubClientMessage (HubConnection* sender, const juce::var& 
         status.broadcastChannel = static_cast<int> (message.getProperty ("bc", 0));
         status.listenChannel = static_cast<int> (message.getProperty ("lc", 0));
         status.lastSeenMs = juce::Time::currentTimeMillis();
+        status.connectionId = reinterpret_cast<juce::int64> (sender);
 
         std::lock_guard<std::mutex> lock (connectionsMutex);
         remoteStatuses[sender] = status;
@@ -391,4 +416,23 @@ std::vector<OrchDelayLink::RemoteInstanceStatus> OrchDelayLink::getRemoteStatuse
     for (const auto& [connection, status] : remoteStatuses)
         result.push_back (status);
     return result;
+}
+
+void OrchDelayLink::sendSetListenChannel (juce::int64 connectionId, int channel)
+{
+    // Called from the editor's own click handler (message thread) - locks
+    // connectionsMutex itself like every other accessor, same as the
+    // reasoning in this method's own doc comment in the header.
+    std::lock_guard<std::mutex> lock (connectionsMutex);
+
+    for (auto& connection : serverConnections)
+    {
+        if (reinterpret_cast<juce::int64> (connection.get()) == connectionId)
+        {
+            sendJson (*connection, setListenMessageFrom (channel));
+            return;
+        }
+    }
+    // Not found - the target disconnected between the matrix snapshot and
+    // the click. Safe no-op, see this method's own doc comment.
 }

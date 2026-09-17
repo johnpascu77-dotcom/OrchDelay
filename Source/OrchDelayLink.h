@@ -34,6 +34,14 @@ class OrchDelayAudioProcessor;
 // its own Listen Channel), except that it also applies an incoming phrase to
 // its OWN Remote bank when the hub instance's own Listen Channel matches
 // (the hub is just another peer, not exempted from listening).
+//
+// Also carries a second, much smaller kind of traffic (Docs SS33): a
+// periodic per-client "heartbeat" (identity + current channel settings, no
+// musical content) that only the hub consumes, feeding the Connection
+// Matrix UI (Docs SS31), and - one level further - a one-shot control
+// command the hub can send back to a specific client to change ITS OWN
+// Listen Channel ("click-to-wire"). Both are tagged distinctly from phrase
+// messages (a "t" field) so they can never be parsed as one another.
 class OrchDelayLink : private juce::Thread
 {
 public:
@@ -59,8 +67,31 @@ public:
         int broadcastChannel = 0;
         int listenChannel = 0;
         juce::int64 lastSeenMs = 0;
+
+        // Opaque handle for sendSetListenChannel below (Docs SS33/click-to-
+        // wire) - the owning HubConnection's own pointer value, reinterpreted
+        // as an integer so the editor never touches a raw connection object
+        // directly. Never dereferenced as a pointer outside OrchDelayLink
+        // itself; only ever compared for identity against the live
+        // serverConnections list at send time, so a stale id from a
+        // since-disconnected instance safely finds nothing rather than
+        // touching freed memory.
+        juce::int64 connectionId = 0;
     };
     std::vector<RemoteInstanceStatus> getRemoteStatusesForUi() const;
+
+    // Click-to-wire (Docs SS33): the hub sends a specific OTHER instance a
+    // one-shot command to change its own Listen Channel - the first time
+    // this codebase lets one instance reach into another's own settings,
+    // rather than only ever moving musical content. Only makes sense when
+    // THIS instance is the hub (only the hub has any live connectionId to
+    // target); a no-op if connectionId no longer matches any connected
+    // client (it disconnected between the matrix snapshot and the click -
+    // safe, not an error, the matrix will simply stop showing that row next
+    // tick). Callable from the message thread (the editor's own click
+    // handler) - locks connectionsMutex itself, same as every other
+    // accessor here.
+    void sendSetListenChannel (juce::int64 connectionId, int channel);
 
 private:
     class ClientConnection;

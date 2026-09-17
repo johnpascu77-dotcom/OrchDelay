@@ -1443,3 +1443,69 @@ of this feature - a range that never touches the old anchor at all (e.g. Stretch
 old model), and the Quantized-Stretch no-legal-ratio-in-range fallback. Rebuilt+reinstalled, Build
 ~2026-09-17. **Not yet live-tested** in Bitwig - Standalone verification covers UI/parameter-wiring
 correctness, not real captured-phrase musical behavior.
+
+## SS33. Click-to-wire - the Connection Matrix becomes interactive
+
+Direct follow-up to SS31/32: user reported the cascade debugged earlier (Docs, same session as SS31) was
+STILL silent on the intermediate node even after SS29-32 - correctly expected, since nothing in SS29-32
+touched the actual broadcast-relay mechanism (an instance with no live MIDI of its own still has nothing
+NEW to hand onward, regardless of how easy wiring is to set). Before building, this was flagged to the
+user directly: click-to-wire only makes WIRING easier, it does not by itself fix a chain where an
+intermediate node has no live input - that's the separate, still-deferred relay/re-broadcast feature.
+User confirmed: click-to-wire only, for now.
+
+**The new trust boundary**: this is the first time anything in this codebase lets one OrchDelay instance
+reach into ANOTHER instance's own settings, rather than only ever moving musical content one direction.
+Scoped deliberately narrow - the ONLY thing a click can do is set the clicked destination's own Listen
+Channel to the clicked source's own Broadcast Channel (or to 0, disconnecting) - never any other
+parameter, never anything that could affect audio output directly, always visible immediately in the
+matrix itself.
+
+**Wire protocol**: a third message type (alongside `"phrase"` and `"heartbeat"`, Docs SS31) -
+`{"t":"setListen","ch":N}`, unicast hub-to-one-client, never fanned out (`OrchDelayLink::sendSetListenChannel`).
+Targeting needed a stable per-connection handle the editor could hold onto between a matrix snapshot and a
+later click - reused the `HubConnection*` pointer itself, reinterpreted as an opaque `juce::int64
+connectionId` (never dereferenced outside `OrchDelayLink`, only ever compared for identity against the
+live `serverConnections` list at send time) rather than inventing a separate id-assignment scheme.
+`RemoteInstanceStatus` (already built for the matrix) gained this field, populated the moment a heartbeat
+arrives (`onHubClientMessage`'s existing heartbeat branch). A stale id (the target disconnected between
+snapshot and click) is a safe no-op - `sendSetListenChannel` simply finds nothing and returns; the matrix
+stops showing that row on the next tick regardless.
+
+**Receiving side**: `ClientConnection::messageReceived` gained a `"setListen"` branch (checked before the
+existing `"phrase"` handling) that calls the new `OrchDelayAudioProcessor::setListenChannelFromRemote`.
+This is the ONLY place in the codebase so far where a message arriving on the Link's own connection thread
+needs to change an APVTS parameter - `setValueNotifyingHost` is expected to run on the message thread, so
+this marshals via `juce::MessageManager::callAsync`, weak-reference-guarded (`OrchDelayAudioProcessor`
+gained `JUCE_DECLARE_WEAK_REFERENCEABLE`) against the processor being torn down before the async callback
+fires - the same safety pattern `OrchDelayLink::onHubClientGone` already established for its own
+message-thread handoff.
+
+**Editor**: `ConnectionMatrixView` gained `mouseDown` (hit-testing reuses the exact same grid-geometry
+math `paint()` uses now, factored into a shared `computeGridGeometry()` so the two can never drift out of
+sync) and an `onCellClicked(sourceRowIndex, destColumnIndex)` callback - fires only for an off-diagonal
+cell whose source row is actually broadcasting on something (clicking a non-broadcasting row's own cells,
+or the diagonal, does nothing - there'd be nothing meaningful to wire). The editor's handler reads both
+rows from `matrixView.getRows()` (the exact same snapshot just rendered - never stale by more than one
+tick, since a click can only happen while the matrix is visible and on-screen), decides connect vs.
+disconnect (clicking an already-connected cell disconnects, matching AUM's own toggle convention -
+connecting naturally supersedes whatever the destination was previously listening to, since Listen Channel
+is single-valued, no separate action needed for that old connection to stop being lit), and either writes
+the Hub's own `listenChannel` parameter directly (destination is the self row) or calls
+`sendSetListenChannel` (destination is a remote row). Legend text updated from "Read-only for now" to
+describe the actual click behavior.
+
+**Verification**: built clean, 172 `OrchDelayLogicCheck` assertions unaffected (this feature added no new
+`odly::` pure functions - it's Link/processor/editor plumbing only). The self-target path (clicking a cell
+whose destination is the hub's own row) is mechanically identical to already-proven direct-parameter-write
+code elsewhere in this editor (Docs SS32's own range sliders) and needs no separate proof. **The genuine
+cross-instance path - one Standalone instance's click actually changing a SEPARATE instance's own Listen
+Channel over the loopback connection - could NOT be verified this session**: a 2-Standalone-instance test
+was attempted but blocked by persistent, unrelated focus-stealing interference from another application
+on the test machine (an intermittently-reappearing Visual Studio Installer window kept stealing
+foreground focus from the automation script, regardless of window z-order fixes). Given the time already
+spent fighting that environment issue, stopped the live attempt and did a careful code-level re-read of
+the complete message path instead (summarized above) rather than continue - found no correctness issues,
+but this is self-review, not a substitute for an actual round-trip. **Needs the user's own real multi-
+instance test** (Bitwig, or two Standalone instances on a machine without this interference) before this
+can be called genuinely proven, same as the Connection Matrix's own heartbeat mechanism in SS31.
