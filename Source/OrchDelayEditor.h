@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include "OrchDelayProcessor.h"
+#include "OrchDelayLink.h"   // OrchDelayLink::PresetEntry (Hub-pushed presets, SS39), OrchDelayLink::ShapeEntry (Hub General Parameters, SS45)
 
 // Minimal v1 editor: parameter controls + a one-line transport-status label
 // (per Docs SS7 - a pending-phrase-queue visualization is a nice-to-have,
@@ -47,6 +48,10 @@ private:
             juce::int64 connectionId = 0;
         };
 
+        // Sizes itself to its own natural content size (fixed per-cell
+        // dimensions x row count, never shrunk to fit whatever's visible) and
+        // relies on the owning editor's Viewport for scrolling once that
+        // exceeds the visible area - see computeGridGeometry()'s own comment.
         void setRows (std::vector<Row> newRows);
         const std::vector<Row>& getRows() const { return rows; }
         void paint (juce::Graphics&) override;
@@ -87,6 +92,25 @@ private:
 
     juce::Label captureModeLabel;
     juce::ComboBox captureModeBox;
+
+    // Docs SS40: a keyswitch-range note should never be treated as musical
+    // content to capture/replay/broadcast - the mirror image of OrchGate's
+    // own "Pass Keyswitches", which always LETS a keyswitch range through
+    // regardless of gate state. See createParameterLayout's own doc comment
+    // in OrchDelayProcessor.cpp for the real live-rig bug this fixes.
+    juce::Label ignoreKeyswitchesLabel;
+    juce::ToggleButton ignoreKeyswitchesButton;
+    juce::Label ksIgnoreMinLabel;
+    juce::Slider ksIgnoreMinSlider;
+    juce::Label ksIgnoreMaxLabel;
+    juce::Slider ksIgnoreMaxSlider;
+
+    // SS43: see monophonicCapture's own doc comment in createParameterLayout
+    // for the live-rig bug this fixes (Horn 4 sounding two-note clusters,
+    // relayed from a legato source with genuinely overlapping captured note
+    // durations). Off by default - only turn on for an instrument modeled as
+    // a monophonic player.
+    juce::ToggleButton monophonicCaptureButton;
 
     juce::Label holdBarsLabel;
     juce::Slider holdBarsSlider;
@@ -161,6 +185,17 @@ private:
     juce::Label listenChannelLabel;
     juce::Slider listenChannelSlider;
 
+    // SS42: the real MIDI channel every note THIS instance FIRES (local-bank
+    // replay, Autonomous Fire, relayed Remote-bank content alike) actually
+    // goes out on - auto-detected from real incoming note-ons by default (0),
+    // override only if auto-detect proves flaky for an instrument with
+    // sparse/no live input (same caveat as OrchNoteMapper's own KS Generator
+    // Channel override). See outputChannelOverride's own doc comment in
+    // createParameterLayout for the real live-rig bug (Horn 4 polyphony,
+    // 2026-09-28) this fixes.
+    juce::Label outputChannelLabel;
+    juce::Slider outputChannelSlider;
+
     // Off by default (Docs SS35) - re-broadcasts Remote-bank material this
     // instance fires via Autonomous Fire, on its own Broadcast Channel
     // above, tagged with an incremented hop count. What actually lets a
@@ -186,7 +221,89 @@ private:
     // a non-hub instance never has any remote status data to show.
     juce::TextButton matrixTabButton;
     ConnectionMatrixView matrixView;
+    juce::Viewport matrixViewport;   // matrixView sizes itself to full content; this scrolls it when that exceeds the visible area (2026-09-26: a real rig runs ~44 instances, far more than fit unscrolled)
     bool showingMatrix = false;
+
+    // SS44 (2026-09-28): the main parameter view grew past a screen's worth
+    // of height across this whole session's feature growth (Hub Presets,
+    // Ignore Keyswitches, Reset All Instances, Output Channel override,
+    // Monophonic Capture - each one bumping the WINDOW's own fixed height a
+    // little further, see the constructor's own comment on setSize) - a real
+    // live report confirmed the window now simply runs off a real screen
+    // with no way to see the rest. Same fix as matrixViewport/matrixView's
+    // own established pattern just above: mainPanelContent holds every
+    // control the main view has always had (moved into it at construction
+    // time, see the reparenting block at the end of the constructor - the
+    // 60+ addAndMakeVisible/addChildComponent call sites elsewhere in this
+    // file are UNCHANGED), sized to a fixed height generous enough to never
+    // clip; mainPanelViewport scrolls it when the window is shorter than
+    // that, exactly like matrixViewport already does for matrixView. Fills
+    // the same fullWidthArea matrixViewport does - only one of the two is
+    // ever visible at a time, same as before.
+    juce::Component mainPanelContent;
+    juce::Viewport mainPanelViewport;
+
+    // Hub-pushed presets (SS39, Docs SS39): a routing snapshot (Broadcast/
+    // Listen Channel, Relay Remote Material, Active Bank) for every instance
+    // in the rig, captured from the SAME live heartbeat table the Connection
+    // Matrix reads, save/loadable to a JSON file on disk, and re-sendable
+    // on demand - the actual fix for a whole session's worth of "one
+    // instance's routing silently reverted and now the chain is broken"
+    // (2026-09-27). Only shown/enabled when Broadcast Hub is checked, same
+    // as the Matrix - only the hub ever has a live table of other instances
+    // to capture from. `pendingPresetEntries` is deliberately a hold buffer,
+    // not auto-sent - Save/Load only ever populate it and report a count;
+    // Send Preset is the one and only action that actually touches the
+    // rest of the rig, so a misclicked file dialog can never silently push
+    // a stale/wrong routing table onto 27 other live instances.
+    juce::Label presetSectionLabel;
+    juce::TextButton savePresetButton;
+    juce::TextButton loadPresetButton;
+    juce::TextButton sendPresetButton;
+    juce::Label presetStatusLabel;
+    std::vector<OrchDelayLink::PresetEntry> pendingPresetEntries;
+    std::unique_ptr<juce::FileChooser> presetFileChooser;   // kept alive for the duration of an async chooser
+    void capturePresetToBuffer();
+    void loadPresetFromFile (const juce::File&);
+    void savePresetToFile (const juce::File&);
+    void sendPendingPreset();
+
+    // Hub-pushed full reset (SS41): the rig-wide "start completely fresh"
+    // Reset All Instances button - one click, from wherever the Hub happens
+    // to be, instead of Clear Bank (x3) + Clear Remote on every single
+    // instance by hand. Same isHub-only visibility as the preset section
+    // above (only the hub has any live connections to fan a reset out to),
+    // deliberately kept in its own row rather than folded into the preset
+    // buttons - it wipes musical content, not routing, and shouldn't read as
+    // "just another preset action."
+    juce::TextButton resetAllButton;
+
+    // SS45: Hub "General Parameters" - a shared CONTENT-SHAPING template
+    // (see OrchDelayLink::ShapeEntry's own doc comment) authored once here on
+    // the Hub's own sliders/toggles and pushed to the whole rig - the
+    // "control tower" the Hub Presets section above already is for ROUTING,
+    // now for the musical timing/character knobs that were being re-clicked
+    // ad hoc per instance instead. These controls are DELIBERATELY plain
+    // (no SliderAttachment/ButtonAttachment) - they represent a value to
+    // SEND, not this instance's own current setting, same reasoning
+    // pendingPresetEntries above has for staying a hold buffer until Send is
+    // actually clicked. Same isHub-only visibility as the sections above.
+    juce::Label shapeSectionLabel;
+    juce::Label shapeHoldBarsLabel;
+    juce::Slider shapeHoldBarsSlider;
+    juce::Label shapeAutonomousFireLabel;
+    juce::Slider shapeAutonomousFireSlider;
+    juce::Label shapePhraseGapLabel;
+    juce::Slider shapePhraseGapSlider;
+    juce::Label shapeMinimumInterestLabel;
+    juce::Slider shapeMinimumInterestSlider;
+    juce::Label shapeCallbackProbabilityLabel;
+    juce::Slider shapeCallbackProbabilitySlider;
+    juce::ToggleButton shapeMonophonicCaptureButton;
+    juce::ToggleButton shapeIgnoreKeyswitchesButton;
+    juce::TextButton sendShapeButton;
+    juce::TextButton randomizeSendShapeButton;
+    OrchDelayLink::ShapeEntry buildShapeFromUi() const;
 
     // Every control that belongs to the normal parameter view (everything
     // except title/subtitle/build/status and the matrix machinery itself) -
@@ -238,6 +355,10 @@ private:
 
     std::unique_ptr<ButtonAttachment> bypassAttachment;
     std::unique_ptr<ComboBoxAttachment> captureModeAttachment;
+    std::unique_ptr<ButtonAttachment> ignoreKeyswitchesAttachment;
+    std::unique_ptr<ButtonAttachment> monophonicCaptureAttachment;
+    std::unique_ptr<SliderAttachment> ksIgnoreMinAttachment;
+    std::unique_ptr<SliderAttachment> ksIgnoreMaxAttachment;
     std::unique_ptr<SliderAttachment> holdBarsAttachment;
     std::unique_ptr<ButtonAttachment> holdBarsRandomAttachment;
     std::unique_ptr<ComboBoxAttachment> overlapModeAttachment;
@@ -265,6 +386,7 @@ private:
     std::unique_ptr<ButtonAttachment> linkHubAttachment;
     std::unique_ptr<SliderAttachment> broadcastChannelAttachment;
     std::unique_ptr<SliderAttachment> listenChannelAttachment;
+    std::unique_ptr<SliderAttachment> outputChannelAttachment;
     std::unique_ptr<ButtonAttachment> relayEnabledAttachment;
     std::unique_ptr<SliderAttachment> instanceSeedAttachment;
 

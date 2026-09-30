@@ -3,6 +3,7 @@
 #include "OrchDelayLink.h"
 
 #include <algorithm>
+#include <array>
 
 namespace
 {
@@ -18,24 +19,22 @@ namespace
 OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
-    // Fixed at 1040x860 with no way to resize used to be fine, but this
-    // session added a full row (matrix button), an Instance Label field,
-    // and 6 range sliders without ever re-checking against a real screen -
-    // a live user's own 1536x864 logical display leaves barely any margin
-    // for the window's own titlebar and the OS taskbar once you add 860px
-    // of content height, and with no resize capability at all there was no
-    // way to work around it. Trimmed the default height a little and made
-    // the window genuinely resizable (bounded, so it can't become unusably
-    // small) as the durable fix - works for this screen and any other.
-    // Tightened row spacing (8px -> 5px) and the status readout's own font/
-    // height buy back real space, but a screen this size (1536x864 logical)
-    // simply doesn't have room for the full content height AND comfortable
-    // OS chrome margin at any reasonable default - resizability (below) is
-    // the actual fix, not this specific number; 820 just starts closer to
-    // right than the original 860 did.
+    // Every one of SS39-SS43 (Hub Presets, Ignore Keyswitches, Reset All
+    // Instances, Output Channel override, Monophonic Capture) bumped this
+    // window's own fixed height a bit further, on the theory that
+    // resizability (see below) covered it - it didn't, once the total
+    // genuinely exceeded a real screen's usable height with no way to see
+    // the rest (confirmed live, 2026-09-28). SS44 fixes this the durable way
+    // instead: the main panel now lives in mainPanelContent, a fixed-size
+    // scrollable canvas behind mainPanelViewport (see that member's own doc
+    // comment in the header, and resized()'s own comment where it sets
+    // mainPanelContent's size) - so the OUTER window itself only ever needs
+    // to be a comfortable, real-screen-friendly size, never the content's
+    // own full height. Still genuinely resizable within reason (a host
+    // panel, in particular, can render less space than even this).
     setResizable (true, true);
-    setResizeLimits (900, 650, 1400, 1000);
-    setSize (1040, 820);
+    setResizeLimits (900, 500, 1400, 1000);
+    setSize (1040, 760);
 
     titleLabel.setText ("OrchDelay", juce::dontSendNotification);
     titleLabel.setJustificationType (juce::Justification::centred);
@@ -75,6 +74,12 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     captureModeBox.setColour (juce::ComboBox::textColourId, juce::Colours::white);
     captureModeBox.setColour (juce::ComboBox::outlineColourId, kOutline);
     addAndMakeVisible (captureModeBox);
+
+    // Docs SS40 - see OrchDelayProcessor.cpp's own doc comment on
+    // "ignoreKeyswitches" for why this exists. Set up via the shared
+    // setupLabel/setupSlider helpers just below, once they're defined -
+    // deferred to right after Autonomous Fire's own setup, alongside the
+    // rest of the simple label+slider rows.
 
     auto setupLabel = [] (juce::Label& label, const juce::String& text)
     {
@@ -129,6 +134,25 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     setupLabel (autonomousFireLabel, "Autonomous Fire (bars)");
     addAndMakeVisible (autonomousFireLabel);
     setupSlider (autonomousFireSlider);
+
+    // Docs SS40: mirror of OrchGate's own "Pass Keyswitches" - here the
+    // keyswitch range is never captured/fired/broadcast in the first place,
+    // rather than always let through regardless of gate state.
+    ignoreKeyswitchesButton.setButtonText ("Ignore Keyswitches");
+    ignoreKeyswitchesButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
+    addAndMakeVisible (ignoreKeyswitchesButton);
+    setupLabel (ksIgnoreMinLabel, "KS Ignore Min");
+    addAndMakeVisible (ksIgnoreMinLabel);
+    setupSlider (ksIgnoreMinSlider);
+    setupLabel (ksIgnoreMaxLabel, "KS Ignore Max");
+    addAndMakeVisible (ksIgnoreMaxLabel);
+    setupSlider (ksIgnoreMaxSlider);
+
+    // Docs SS43: see monophonicCapture's own doc comment in
+    // createParameterLayout for the live-rig bug this fixes.
+    monophonicCaptureButton.setButtonText ("Monophonic Capture");
+    monophonicCaptureButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
+    addAndMakeVisible (monophonicCaptureButton);
 
     // Multi-bank memory (see Docs SS25): Capture Bank is where newly-closed
     // phrases get remembered; Active Bank is where Callback Probability and
@@ -309,6 +333,10 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     addAndMakeVisible (listenChannelLabel);
     setupSlider (listenChannelSlider);
 
+    setupLabel (outputChannelLabel, "Output Channel (0=auto)");
+    addAndMakeVisible (outputChannelLabel);
+    setupSlider (outputChannelSlider);
+
     relayEnabledButton.setButtonText ("Relay Remote Material");
     relayEnabledButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
     addAndMakeVisible (relayEnabledButton);
@@ -334,7 +362,21 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     instanceLabelEditor.setColour (juce::TextEditor::textColourId, juce::Colours::white);
     instanceLabelEditor.setColour (juce::TextEditor::outlineColourId, kOutline);
     instanceLabelEditor.setTextToShowWhenEmpty ("e.g. Violins", kMuted);
-    auto commitLabel = [this] { audioProcessor.setInstanceLabel (instanceLabelEditor.getText()); };
+    auto commitLabel = [this]
+    {
+        audioProcessor.setInstanceLabel (instanceLabelEditor.getText());
+
+        // The label isn't an APVTS parameter, so nothing here raises the
+        // host's own "project is dirty" flag by itself. Without this,
+        // Bitwig was observed serialising a stale getStateInformation()
+        // snapshot from load time on Ctrl+S - the label changed in memory
+        // and stayed correct all session, but a real save->quit->reopen
+        // cycle silently reverted to the last state the host actually
+        // asked for. restartComponent (VST3) / updateHostDisplay (JUCE)
+        // is the standard hook for "non-parameter state changed, please
+        // treat me as dirty and re-fetch before you persist."
+        audioProcessor.updateHostDisplay();
+    };
     instanceLabelEditor.onFocusLost = commitLabel;
     instanceLabelEditor.onReturnKey = commitLabel;
     addAndMakeVisible (instanceLabelEditor);
@@ -351,7 +393,16 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     matrixTabButton.onClick = [this] { setShowingMatrix (matrixTabButton.getToggleState()); };
     addChildComponent (matrixTabButton);   // starts hidden - see timerCallback
 
-    addChildComponent (matrixView);   // starts hidden - shown via setShowingMatrix
+    matrixViewport.setViewedComponent (&matrixView, false);   // false: matrixView is a plain member, not owned by the viewport
+    matrixViewport.setScrollBarsShown (true, true);
+    addChildComponent (matrixViewport);   // starts hidden - shown via setShowingMatrix
+
+    // SS44: see mainPanelContent's own doc comment in the header. Same
+    // Viewport pattern as matrixViewport just above, always visible (unlike
+    // matrixViewport, the main panel is the default view on construction).
+    mainPanelViewport.setViewedComponent (&mainPanelContent, false);
+    mainPanelViewport.setScrollBarsShown (true, false);
+    addAndMakeVisible (mainPanelViewport);
 
     // Click-to-wire (Docs SS33): sourceIdx/destIdx are positions in the
     // SAME row list matrixView just rendered from (getRows()), which is
@@ -387,6 +438,172 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
         }
     };
 
+    // Hub-pushed presets (SS39) - see this file's own header comment on
+    // pendingPresetEntries for why Save/Load only ever fill a hold buffer
+    // and Send is the one action that actually touches the rest of the rig.
+    // Visibility driven from timerCallback alongside matrixTabButton - only
+    // the hub ever has a live table of other instances to capture from.
+    presetSectionLabel.setText ("Hub Presets", juce::dontSendNotification);
+    presetSectionLabel.setColour (juce::Label::textColourId, juce::Colours::white);
+    presetSectionLabel.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+    addChildComponent (presetSectionLabel);
+
+    savePresetButton.setButtonText ("Save Preset...");
+    savePresetButton.setColour (juce::TextButton::buttonColourId, kBoxBackground);
+    savePresetButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    savePresetButton.onClick = [this]
+    {
+        capturePresetToBuffer();
+
+        presetFileChooser = std::make_unique<juce::FileChooser> (
+            "Save routing preset...",
+            juce::File::getSpecialLocation (juce::File::userDocumentsDirectory),
+            "*.json");
+
+        presetFileChooser->launchAsync (juce::FileBrowserComponent::saveMode
+                                             | juce::FileBrowserComponent::warnAboutOverwriting,
+            [this] (const juce::FileChooser& chooser)
+            {
+                const auto file = chooser.getResult();
+                if (file != juce::File())
+                    savePresetToFile (file);
+            });
+    };
+    addChildComponent (savePresetButton);
+
+    loadPresetButton.setButtonText ("Load Preset...");
+    loadPresetButton.setColour (juce::TextButton::buttonColourId, kBoxBackground);
+    loadPresetButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    loadPresetButton.onClick = [this]
+    {
+        presetFileChooser = std::make_unique<juce::FileChooser> (
+            "Load routing preset...",
+            juce::File::getSpecialLocation (juce::File::userDocumentsDirectory),
+            "*.json");
+
+        presetFileChooser->launchAsync (juce::FileBrowserComponent::openMode,
+            [this] (const juce::FileChooser& chooser)
+            {
+                const auto file = chooser.getResult();
+                if (file != juce::File())
+                    loadPresetFromFile (file);
+            });
+    };
+    addChildComponent (loadPresetButton);
+
+    sendPresetButton.setButtonText ("Send Preset to Rig");
+    sendPresetButton.setColour (juce::TextButton::buttonColourId, kBoxBackground);
+    sendPresetButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    sendPresetButton.onClick = [this] { sendPendingPreset(); };
+    addChildComponent (sendPresetButton);
+
+    // Hub-pushed full reset (SS41) - see this file's own header comment on
+    // resetAllButton. Coloured as a warning (unlike the routing-only preset
+    // buttons above) since one click wipes every connected instance's
+    // musical memory at once, with no per-instance undo - a confirm dialog
+    // is the one bit of friction worth keeping even though the whole point
+    // of this button is removing the OTHER, far more tedious kind (visiting
+    // every instance by hand).
+    resetAllButton.setButtonText ("Reset All Instances");
+    resetAllButton.setColour (juce::TextButton::buttonColourId, juce::Colours::darkred);
+    resetAllButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    resetAllButton.onClick = [this]
+    {
+        juce::NativeMessageBox::showOkCancelBox (juce::MessageBoxIconType::WarningIcon,
+            "Reset All Instances",
+            "Clear every OrchDelay instance's captured and relayed phrase memory across the whole rig?\n\n"
+            "This cannot be undone.",
+            this,
+            juce::ModalCallbackFunction::create ([this] (int result)
+            {
+                if (result != 0)
+                    audioProcessor.getLink().sendResetAll();
+            }));
+    };
+    addChildComponent (resetAllButton);
+
+    presetStatusLabel.setJustificationType (juce::Justification::centredLeft);
+    presetStatusLabel.setColour (juce::Label::textColourId, kMuted);
+    presetStatusLabel.setFont (juce::FontOptions (11.0f));
+    presetStatusLabel.setText ("No preset captured yet - Save or Load one.", juce::dontSendNotification);
+    addChildComponent (presetStatusLabel);
+
+    // SS45: Hub "General Parameters" - see this file's own header comment on
+    // shapeSectionLabel. Plain sliders/toggles (no APVTS attachment - these
+    // represent a value to SEND, not this instance's own setting), default-
+    // initialised to the same defaults each underlying parameter itself
+    // defaults to, so an untouched template starts as a musically-neutral
+    // no-op rather than an arbitrary number.
+    setupLabel (shapeSectionLabel, "General Parameters (sent to whole rig)");
+    shapeSectionLabel.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+    addChildComponent (shapeSectionLabel);
+
+    setupLabel (shapeHoldBarsLabel, "Hold Bars");
+    addChildComponent (shapeHoldBarsLabel);
+    setupSlider (shapeHoldBarsSlider);
+    shapeHoldBarsSlider.setRange (0.0, 16.0, 1.0);
+    shapeHoldBarsSlider.setValue (4.0, juce::dontSendNotification);
+    addChildComponent (shapeHoldBarsSlider);
+
+    setupLabel (shapeAutonomousFireLabel, "Autonomous Fire (bars)");
+    addChildComponent (shapeAutonomousFireLabel);
+    setupSlider (shapeAutonomousFireSlider);
+    shapeAutonomousFireSlider.setRange (0.0, 16.0, 1.0);
+    shapeAutonomousFireSlider.setValue (0.0, juce::dontSendNotification);
+    addChildComponent (shapeAutonomousFireSlider);
+
+    setupLabel (shapePhraseGapLabel, "Phrase Gap (beats)");
+    addChildComponent (shapePhraseGapLabel);
+    setupSlider (shapePhraseGapSlider);
+    shapePhraseGapSlider.setRange (0.25, 8.0, 0.25);
+    shapePhraseGapSlider.setValue (1.0, juce::dontSendNotification);
+    addChildComponent (shapePhraseGapSlider);
+
+    setupLabel (shapeMinimumInterestLabel, "Minimum Interest");
+    addChildComponent (shapeMinimumInterestLabel);
+    setupSlider (shapeMinimumInterestSlider);
+    shapeMinimumInterestSlider.setRange (0.0, 100.0, 1.0);
+    shapeMinimumInterestSlider.setValue (0.0, juce::dontSendNotification);
+    addChildComponent (shapeMinimumInterestSlider);
+
+    setupLabel (shapeCallbackProbabilityLabel, "Callback Probability");
+    addChildComponent (shapeCallbackProbabilityLabel);
+    setupSlider (shapeCallbackProbabilitySlider);
+    shapeCallbackProbabilitySlider.setRange (0.0, 100.0, 1.0);
+    shapeCallbackProbabilitySlider.setValue (0.0, juce::dontSendNotification);
+    addChildComponent (shapeCallbackProbabilitySlider);
+
+    shapeMonophonicCaptureButton.setButtonText ("Monophonic Capture");
+    shapeMonophonicCaptureButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
+    addChildComponent (shapeMonophonicCaptureButton);
+
+    // Deliberately no KS Ignore Min/Max controls here - see ShapeEntry's own
+    // doc comment in OrchDelayLink.h for the live-rig bug this avoids (a
+    // uniform push clobbered per-instrument hand-tuned values). Each
+    // instance's own Ignore Keyswitches range stays under that instance's
+    // own panel, untouched by this section.
+    shapeIgnoreKeyswitchesButton.setButtonText ("Ignore Keyswitches");
+    shapeIgnoreKeyswitchesButton.setColour (juce::ToggleButton::textColourId, juce::Colours::white);
+    shapeIgnoreKeyswitchesButton.setToggleState (true, juce::dontSendNotification);
+    addChildComponent (shapeIgnoreKeyswitchesButton);
+
+    sendShapeButton.setButtonText ("Send to Rig");
+    sendShapeButton.setColour (juce::TextButton::buttonColourId, kBoxBackground);
+    sendShapeButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    sendShapeButton.onClick = [this] { audioProcessor.getLink().sendShapeToRig (buildShapeFromUi(), false); };
+    addChildComponent (sendShapeButton);
+
+    // Only the 5 numeric fields jitter per-instance (see jitterShapeEntry's
+    // own doc comment in OrchDelayLink.cpp) - no confirm dialog, unlike
+    // Reset All Instances: this only nudges musical timing/character within
+    // sensible spans around whatever the template already says, nothing here
+    // is destructive or hard to walk back (just click Send to Rig again).
+    randomizeSendShapeButton.setButtonText ("Randomize & Send");
+    randomizeSendShapeButton.setColour (juce::TextButton::buttonColourId, kBoxBackground);
+    randomizeSendShapeButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+    randomizeSendShapeButton.onClick = [this] { audioProcessor.getLink().sendShapeToRig (buildShapeFromUi(), true); };
+    addChildComponent (randomizeSendShapeButton);
+
     statusLabel.setJustificationType (juce::Justification::centred);
     statusLabel.setColour (juce::Label::textColourId, kMuted);
     statusLabel.setFont (juce::FontOptions (11.0f));
@@ -402,6 +619,10 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     minimumInterestAttachment = std::make_unique<SliderAttachment> (state, "minimumInterest", minimumInterestSlider);
     callbackProbabilityAttachment = std::make_unique<SliderAttachment> (state, "callbackProbability", callbackProbabilitySlider);
     autonomousFireAttachment = std::make_unique<SliderAttachment> (state, "autonomousFireBars", autonomousFireSlider);
+    ignoreKeyswitchesAttachment = std::make_unique<ButtonAttachment> (state, "ignoreKeyswitches", ignoreKeyswitchesButton);
+    ksIgnoreMinAttachment = std::make_unique<SliderAttachment> (state, "ksIgnoreMin", ksIgnoreMinSlider);
+    ksIgnoreMaxAttachment = std::make_unique<SliderAttachment> (state, "ksIgnoreMax", ksIgnoreMaxSlider);
+    monophonicCaptureAttachment = std::make_unique<ButtonAttachment> (state, "monophonicCapture", monophonicCaptureButton);
     captureBankAttachment = std::make_unique<ComboBoxAttachment> (state, "captureBank", captureBankBox);
     activeBankAttachment = std::make_unique<ComboBoxAttachment> (state, "activeBank", activeBankBox);
     recencyBiasAttachment = std::make_unique<SliderAttachment> (state, "recencyBias", recencyBiasSlider);
@@ -422,6 +643,7 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
     linkHubAttachment = std::make_unique<ButtonAttachment> (state, "linkHub", linkHubButton);
     broadcastChannelAttachment = std::make_unique<SliderAttachment> (state, "broadcastChannel", broadcastChannelSlider);
     listenChannelAttachment = std::make_unique<SliderAttachment> (state, "listenChannel", listenChannelSlider);
+    outputChannelAttachment = std::make_unique<SliderAttachment> (state, "outputChannelOverride", outputChannelSlider);
     relayEnabledAttachment = std::make_unique<ButtonAttachment> (state, "relayEnabled", relayEnabledButton);
     instanceSeedAttachment = std::make_unique<SliderAttachment> (state, "instanceSeed", instanceSeedSlider);
 
@@ -437,6 +659,8 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
         &minimumInterestLabel, &minimumInterestSlider,
         &callbackProbabilityLabel, &callbackProbabilitySlider,
         &autonomousFireLabel, &autonomousFireSlider,
+        &ignoreKeyswitchesButton, &ksIgnoreMinLabel, &ksIgnoreMinSlider, &ksIgnoreMaxLabel, &ksIgnoreMaxSlider,
+        &monophonicCaptureButton,
         &captureBankLabel, &captureBankBox, &clearBankButton,
         &activeBankLabel, &activeBankBox,
         &recencyBiasLabel, &recencyBiasSlider,
@@ -449,10 +673,48 @@ OrchDelayAudioProcessorEditor::OrchDelayAudioProcessorEditor (OrchDelayAudioProc
         &intervalLabel, &intervalSlider, &intervalRandomButton, &intervalRangeSlider,
         &linkHubLabel, &linkHubButton, &clearRemoteButton,
         &broadcastChannelLabel, &broadcastChannelSlider,
-        &listenChannelLabel, &listenChannelSlider, &relayEnabledButton,
+        &listenChannelLabel, &listenChannelSlider,
+        &outputChannelLabel, &outputChannelSlider, &relayEnabledButton,
         &instanceSeedLabel, &instanceSeedSlider, &randomizeSeedButton,
         &instanceLabelLabel, &instanceLabelEditor,
+        &presetSectionLabel, &savePresetButton, &loadPresetButton, &sendPresetButton, &presetStatusLabel,
     };
+
+    // SS44: move every child added above INTO mainPanelContent, except the
+    // handful that stay in the fixed header (title/subtitle/build/bypass/
+    // matrixTabButton) or belong to the OTHER Viewport entirely
+    // (matrixViewport) - see mainPanelContent's own doc comment in the
+    // header for why this reparents-after-the-fact instead of retargeting
+    // each of the 60+ addAndMakeVisible/addChildComponent calls above.
+    // Component::addAndMakeVisible on a new parent automatically detaches a
+    // child from whatever parent it already has, so this is a genuine move,
+    // not a duplicate. Snapshot the list first - reparenting while iterating
+    // getChildComponent(i) directly would shift indices out from under the
+    // loop as each one is removed.
+    {
+        const std::array<juce::Component*, 6> keepOnEditor {
+            &titleLabel, &subtitleLabel, &buildLabel,
+            &bypassButton, &matrixTabButton, &matrixViewport
+        };
+
+        std::vector<juce::Component*> toMove;
+        for (int i = 0; i < getNumChildComponents(); ++i)
+        {
+            auto* child = getChildComponent (i);
+            if (std::find (keepOnEditor.begin(), keepOnEditor.end(), child) == keepOnEditor.end()
+                && child != &mainPanelViewport)
+                toMove.push_back (child);
+        }
+
+        // addChildComponent (not addAndMakeVisible) - preserves whatever
+        // visible/hidden state each control already has from its own setup
+        // above (several start hidden on purpose - e.g. the Hub-preset
+        // buttons, gated on isHub in timerCallback) rather than forcing
+        // every single one visible and relying on the very next
+        // timerCallback() call below to quietly correct it.
+        for (auto* child : toMove)
+            mainPanelContent.addChildComponent (child);
+    }
 
     startTimerHz (4);
     timerCallback();
@@ -502,13 +764,28 @@ void OrchDelayAudioProcessorEditor::resized()
     // well above the visible edge - see this bug's own Docs SS27 addendum.
     const auto fullWidthArea = area;
 
+    // SS44: everything below now lives inside mainPanelContent, a fixed-size
+    // scrollable canvas (see its own doc comment in the header), rather than
+    // directly in the outer editor's own bounds - mainPanelViewport (sized to
+    // fullWidthArea at the bottom of this function, mirroring matrixViewport
+    // just below it) scrolls it whenever the real window is shorter than the
+    // content actually needs. kMainPanelContentHeight is deliberately
+    // generous (comfortably taller than this content has ever measured) -
+    // erring tall just leaves a little unused scroll space at the bottom,
+    // never clips, and it only needs to be right once rather than
+    // hand-recomputed on every future feature added here.
+    static constexpr int kMainPanelContentWidth = 1000;
+    static constexpr int kMainPanelContentHeight = 1360;   // +300 for Hub General Parameters (SS45)
+    mainPanelContent.setSize (kMainPanelContentWidth, kMainPanelContentHeight);
+    auto contentArea = mainPanelContent.getLocalBounds().reduced (16, 0);
+
     // Two columns for everything else - capture/timing on the left,
     // transform on the right. The single-column layout grew too tall
     // across this session's feature growth to fit a typical plugin window;
     // split here per direct user request.
-    auto rightArea = area.removeFromRight ((area.getWidth() - 24) / 2);
-    area.removeFromRight (24);
-    auto& leftArea = area;
+    auto rightArea = contentArea.removeFromRight ((contentArea.getWidth() - 24) / 2);
+    contentArea.removeFromRight (24);
+    auto& leftArea = contentArea;
 
     auto leftRow = [&leftArea] (int height = 28) { return leftArea.removeFromTop (height); };
     auto rightRow = [&rightArea] (int height = 28) { return rightArea.removeFromTop (height); };
@@ -544,6 +821,18 @@ void OrchDelayAudioProcessorEditor::resized()
 
     autonomousFireLabel.setBounds (leftRow (18));
     autonomousFireSlider.setBounds (leftRow());
+    leftArea.removeFromTop (5);
+
+    ignoreKeyswitchesButton.setBounds (leftRow());
+    leftArea.removeFromTop (5);
+    ksIgnoreMinLabel.setBounds (leftRow (18));
+    ksIgnoreMinSlider.setBounds (leftRow());
+    leftArea.removeFromTop (5);
+    ksIgnoreMaxLabel.setBounds (leftRow (18));
+    ksIgnoreMaxSlider.setBounds (leftRow());
+    leftArea.removeFromTop (5);
+
+    monophonicCaptureButton.setBounds (leftRow());
     leftArea.removeFromTop (5);
 
     captureBankLabel.setBounds (leftRow (18));
@@ -642,21 +931,91 @@ void OrchDelayAudioProcessorEditor::resized()
     listenChannelSlider.setBounds (rightRow());
     rightArea.removeFromTop (5);
 
+    outputChannelLabel.setBounds (rightRow (18));
+    outputChannelSlider.setBounds (rightRow());
+    rightArea.removeFromTop (5);
+
     relayEnabledButton.setBounds (rightRow());
     rightArea.removeFromTop (5);
 
+    // --- Right column, continued: Hub-pushed presets (SS39) --------------
+    // Visibility is isHub-gated (see timerCallback) same as the Matrix tab,
+    // but bounds are always set regardless - a hidden component's bounds
+    // simply never get painted, and setting them unconditionally means this
+    // block never has to duplicate isHub's own logic.
+    rightArea.removeFromTop (6);
+    presetSectionLabel.setBounds (rightRow (18));
+    auto presetButtonsRow = rightRow (26);
+    const int presetButtonWidth = presetButtonsRow.getWidth() / 3 - 6;
+    savePresetButton.setBounds (presetButtonsRow.removeFromLeft (presetButtonWidth));
+    presetButtonsRow.removeFromLeft (9);
+    loadPresetButton.setBounds (presetButtonsRow.removeFromLeft (presetButtonWidth));
+    presetButtonsRow.removeFromLeft (9);
+    sendPresetButton.setBounds (presetButtonsRow);
+    rightArea.removeFromTop (4);
+    presetStatusLabel.setBounds (rightRow (16));
+    rightArea.removeFromTop (5);
+
+    // Hub-pushed full reset (SS41) - own row below the preset section rather
+    // than folded into presetButtonsRow above, per resetAllButton's own doc
+    // comment (wipes musical content, not routing - kept visually distinct
+    // from the three routing-preset actions above it). Same
+    // always-set-bounds-regardless-of-visibility reasoning as the preset row.
+    resetAllButton.setBounds (rightRow (26));
+    rightArea.removeFromTop (5);
+
+    // SS45: Hub "General Parameters" - own section below Reset All Instances,
+    // same always-set-bounds-regardless-of-visibility reasoning as the preset
+    // row above.
+    rightArea.removeFromTop (6);
+    shapeSectionLabel.setBounds (rightRow (18));
+    rightArea.removeFromTop (2);
+
+    auto placeShapeSliderRow = [&] (juce::Label& label, juce::Slider& slider)
+    {
+        label.setBounds (rightRow (16));
+        slider.setBounds (rightRow (22));
+        rightArea.removeFromTop (4);
+    };
+
+    placeShapeSliderRow (shapeHoldBarsLabel, shapeHoldBarsSlider);
+    placeShapeSliderRow (shapeAutonomousFireLabel, shapeAutonomousFireSlider);
+    placeShapeSliderRow (shapePhraseGapLabel, shapePhraseGapSlider);
+    placeShapeSliderRow (shapeMinimumInterestLabel, shapeMinimumInterestSlider);
+    placeShapeSliderRow (shapeCallbackProbabilityLabel, shapeCallbackProbabilitySlider);
+
+    auto shapeToggleRow = rightRow (24);
+    shapeMonophonicCaptureButton.setBounds (shapeToggleRow.removeFromLeft (shapeToggleRow.getWidth() / 2));
+    shapeIgnoreKeyswitchesButton.setBounds (shapeToggleRow);
+    rightArea.removeFromTop (4);
+
+    auto shapeButtonRow = rightRow (26);
+    sendShapeButton.setBounds (shapeButtonRow.removeFromLeft ((shapeButtonRow.getWidth() - 8) / 2));
+    shapeButtonRow.removeFromLeft (8);
+    randomizeSendShapeButton.setBounds (shapeButtonRow);
+    rightArea.removeFromTop (5);
+
     // Status goes directly below whichever column ended up taller (today,
-    // the left one) - never pinned to the window's own declared bottom edge,
-    // see this function's own comment above `fullWidthArea` for why.
+    // the left one) - in mainPanelContent's own local coordinate space now
+    // (SS44), same reasoning as ever for not pinning to a declared bottom
+    // edge, see this function's own comment above `fullWidthArea` for why.
     const int contentBottom = juce::jmax (leftArea.getY(), rightArea.getY());
-    juce::Rectangle<int> statusArea (fullWidthArea.getX(), contentBottom + 6,
-                                     fullWidthArea.getWidth(), 68);
+    juce::Rectangle<int> statusArea (0, contentBottom + 6, kMainPanelContentWidth, 68);
     statusLabel.setBounds (statusArea);
 
-    // Connection Matrix (Docs SS31) fills the exact same real estate the two
-    // columns above occupy, so toggling it never resizes the window.
-    matrixView.setBounds (fullWidthArea.getX(), fullWidthArea.getY(),
-                          fullWidthArea.getWidth(), contentBottom - fullWidthArea.getY());
+    // SS44: mainPanelViewport fills the same fullWidthArea matrixViewport
+    // does just below - only one of the two is ever visible at a time (see
+    // setShowingMatrix), so they can share the real estate exactly like
+    // matrixViewport already shares it with the (pre-SS44) main view.
+    mainPanelViewport.setBounds (fullWidthArea);
+
+    // Connection Matrix (Docs SS31) fills the exact same real estate the main
+    // panel viewport above occupies, so toggling it never resizes the window.
+    // The viewport (not matrixView itself) gets this bounds - matrixView
+    // sizes itself to its own full content in setRows() and scrolls within
+    // whatever the viewport shows once that's larger (2026-09-26: a real rig
+    // runs ~44 instances, far more than fit in one unscrolled window).
+    matrixViewport.setBounds (fullWidthArea);
 }
 
 void OrchDelayAudioProcessorEditor::setupRandomRangeBinding (juce::Slider& rangeSlider, juce::Slider& manualSlider,
@@ -729,7 +1088,7 @@ void OrchDelayAudioProcessorEditor::setShowingMatrix (bool shouldShow)
     for (auto* c : mainPanelComponents)
         c->setVisible (! shouldShow);
 
-    matrixView.setVisible (shouldShow);
+    matrixViewport.setVisible (shouldShow);
 
     // Unconditional both ways: showing the matrix needs fresh data painted
     // immediately rather than waiting for the next tick, and returning to
@@ -740,9 +1099,108 @@ void OrchDelayAudioProcessorEditor::setShowingMatrix (bool shouldShow)
     timerCallback();
 }
 
+// Hub-pushed presets (SS39) - see this file's own header comment on
+// pendingPresetEntries for the overall Save/Load/Send split.
+void OrchDelayAudioProcessorEditor::capturePresetToBuffer()
+{
+    pendingPresetEntries = audioProcessor.getLink().capturePresetForUi();
+    presetStatusLabel.setText ("Captured " + juce::String (pendingPresetEntries.size()) + " instance(s) - not sent yet.",
+                                juce::dontSendNotification);
+}
+
+void OrchDelayAudioProcessorEditor::savePresetToFile (const juce::File& file)
+{
+    juce::Array<juce::var> entriesVar;
+    for (const auto& entry : pendingPresetEntries)
+    {
+        auto* obj = new juce::DynamicObject();
+        obj->setProperty ("label", entry.label);
+        obj->setProperty ("broadcastChannel", entry.broadcastChannel);
+        obj->setProperty ("listenChannel", entry.listenChannel);
+        obj->setProperty ("relayEnabled", entry.relayEnabled);
+        obj->setProperty ("activeBank", entry.activeBank);
+        obj->setProperty ("outputChannelOverride", entry.outputChannelOverride);
+        entriesVar.add (juce::var (obj));
+    }
+
+    auto* root = new juce::DynamicObject();
+    root->setProperty ("orchDelayPresetVersion", 1);
+    root->setProperty ("entries", entriesVar);
+
+    if (file.replaceWithText (juce::JSON::toString (juce::var (root), true)))
+        presetStatusLabel.setText ("Saved " + juce::String (pendingPresetEntries.size()) + " instance(s) to "
+                                        + file.getFileName(), juce::dontSendNotification);
+    else
+        presetStatusLabel.setText ("Failed to write " + file.getFullPathName(), juce::dontSendNotification);
+}
+
+void OrchDelayAudioProcessorEditor::loadPresetFromFile (const juce::File& file)
+{
+    juce::var parsed;
+    if (! juce::JSON::parse (file.loadFileAsString(), parsed).wasOk() || ! parsed.isObject())
+    {
+        presetStatusLabel.setText ("Failed to read " + file.getFullPathName(), juce::dontSendNotification);
+        return;
+    }
+
+    std::vector<OrchDelayLink::PresetEntry> loaded;
+    if (auto* entries = parsed.getProperty ("entries", juce::var()).getArray())
+    {
+        for (const auto& entryVar : *entries)
+        {
+            OrchDelayLink::PresetEntry entry;
+            entry.label = entryVar.getProperty ("label", "").toString();
+            entry.broadcastChannel = static_cast<int> (entryVar.getProperty ("broadcastChannel", 0));
+            entry.listenChannel = static_cast<int> (entryVar.getProperty ("listenChannel", 0));
+            entry.relayEnabled = static_cast<bool> (entryVar.getProperty ("relayEnabled", false));
+            entry.activeBank = static_cast<int> (entryVar.getProperty ("activeBank", 0));
+            entry.outputChannelOverride = static_cast<int> (entryVar.getProperty ("outputChannelOverride", 0));
+            loaded.push_back (entry);
+        }
+    }
+
+    pendingPresetEntries = std::move (loaded);
+    presetStatusLabel.setText ("Loaded " + juce::String (pendingPresetEntries.size()) + " instance(s) from "
+                                    + file.getFileName() + " - not sent yet.", juce::dontSendNotification);
+}
+
+void OrchDelayAudioProcessorEditor::sendPendingPreset()
+{
+    if (pendingPresetEntries.empty())
+    {
+        presetStatusLabel.setText ("Nothing to send - Save or Load a preset first.", juce::dontSendNotification);
+        return;
+    }
+
+    audioProcessor.getLink().sendPreset (pendingPresetEntries);
+    presetStatusLabel.setText ("Sent preset to " + juce::String (pendingPresetEntries.size()) + " instance(s).",
+                                juce::dontSendNotification);
+}
+
+OrchDelayLink::ShapeEntry OrchDelayAudioProcessorEditor::buildShapeFromUi() const
+{
+    OrchDelayLink::ShapeEntry shape;
+    shape.holdBars = static_cast<int> (shapeHoldBarsSlider.getValue());
+    shape.autonomousFireBars = static_cast<int> (shapeAutonomousFireSlider.getValue());
+    shape.phraseGapBeats = static_cast<float> (shapePhraseGapSlider.getValue());
+    shape.minimumInterest = static_cast<float> (shapeMinimumInterestSlider.getValue());
+    shape.callbackProbability = static_cast<float> (shapeCallbackProbabilitySlider.getValue());
+    shape.monophonicCapture = shapeMonophonicCaptureButton.getToggleState();
+    shape.ignoreKeyswitches = shapeIgnoreKeyswitchesButton.getToggleState();
+    return shape;
+}
+
 void OrchDelayAudioProcessorEditor::ConnectionMatrixView::setRows (std::vector<Row> newRows)
 {
     rows = std::move (newRows);
+
+    // Size to natural content (fixed-per-cell x row count), not whatever the
+    // owning Viewport happens to be showing - see computeGridGeometry()'s own
+    // comment. setSize() is a no-op if unchanged, so this is safe to call on
+    // every refresh tick.
+    const auto geo = computeGridGeometry();
+    setSize (geo.leftGutter + geo.n * geo.cellW, geo.topStrip + geo.n * geo.cellH);
+
     repaint();
 }
 
@@ -753,12 +1211,16 @@ OrchDelayAudioProcessorEditor::ConnectionMatrixView::GridGeometry
     const int leftGutter = 200;
     const int topStrip = 40;   // taller than a bare index needs - now holds a real (short) name
 
-    const auto gridArea = getLocalBounds().withTrimmedLeft (leftGutter).withTrimmedTop (topStrip);
-    // Columns need real width to show a destination's own name (see this
-    // struct's own doc comment) - independent of row height, which stays
-    // compact since row labels already have the whole left gutter.
-    const int cellW = juce::jlimit (70, 130, gridArea.getWidth() / juce::jmax (1, n));
-    const int cellH = juce::jlimit (22, 48, gridArea.getHeight() / juce::jmax (1, n));
+    // Fixed per-cell size regardless of how many rows there are - a real rig
+    // runs ~44 instances (2026-09-25/26 live use), far more than fit legibly
+    // in any one window. Previously this divided the visible area by n,
+    // silently shrinking (and eventually clipping) every cell as the rig
+    // grew; now the grid always renders at a legible fixed size, growing
+    // past the viewport's own visible bounds instead - setRows() sizes this
+    // component to match, and the owning editor's Viewport (not this
+    // component) provides scrolling once that exceeds what's on screen.
+    const int cellW = 90;
+    const int cellH = 26;
     return { leftGutter, topStrip, cellW, cellH, leftGutter, topStrip, n };
 }
 
@@ -923,6 +1385,56 @@ void OrchDelayAudioProcessorEditor::timerCallback()
     matrixTabButton.setVisible (isHub);
     if (! isHub && showingMatrix)
         setShowingMatrix (false);
+
+    // Hub-pushed presets (SS39) - same isHub gate as the Matrix tab above;
+    // hidden (not just disabled) when this instance isn't the hub, same
+    // reasoning as matrixTabButton's own doc comment - a non-hub instance
+    // has no live table of other instances to capture a preset from at all.
+    presetSectionLabel.setVisible (isHub);
+    savePresetButton.setVisible (isHub);
+    loadPresetButton.setVisible (isHub);
+    sendPresetButton.setVisible (isHub);
+    presetStatusLabel.setVisible (isHub);
+
+    // Hub-pushed full reset (SS41) - same isHub gate as the preset section
+    // above, same reasoning: only the hub has any live connections to fan a
+    // reset out to.
+    resetAllButton.setVisible (isHub);
+
+    // SS45: Hub "General Parameters" - same isHub gate as the sections
+    // above, same reasoning: this only means anything once there's a live
+    // rig of connected clients to push a template out to.
+    shapeSectionLabel.setVisible (isHub);
+    shapeHoldBarsLabel.setVisible (isHub);
+    shapeHoldBarsSlider.setVisible (isHub);
+    shapeAutonomousFireLabel.setVisible (isHub);
+    shapeAutonomousFireSlider.setVisible (isHub);
+    shapePhraseGapLabel.setVisible (isHub);
+    shapePhraseGapSlider.setVisible (isHub);
+    shapeMinimumInterestLabel.setVisible (isHub);
+    shapeMinimumInterestSlider.setVisible (isHub);
+    shapeCallbackProbabilityLabel.setVisible (isHub);
+    shapeCallbackProbabilitySlider.setVisible (isHub);
+    shapeMonophonicCaptureButton.setVisible (isHub);
+    shapeIgnoreKeyswitchesButton.setVisible (isHub);
+    sendShapeButton.setVisible (isHub);
+    randomizeSendShapeButton.setVisible (isHub);
+
+    // Instance Label root cause (SS37, confirmed via temp logging): Bitwig
+    // constructs this editor BEFORE calling setStateInformation on the
+    // processor, so the setText() in the constructor always reads an empty
+    // label - the real saved value lands in the processor a moment later
+    // with nothing to push it into the already-built TextEditor. The saved
+    // state itself was never the problem. Poll it here instead, skipping
+    // while the field has focus so an in-progress edit is never clobbered,
+    // and skipping the write when the text already matches so a normal
+    // (already-synced) tick never disturbs cursor position/selection.
+    if (! instanceLabelEditor.hasKeyboardFocus (false))
+    {
+        const auto currentLabel = audioProcessor.getInstanceLabelForUi();
+        if (instanceLabelEditor.getText() != currentLabel)
+            instanceLabelEditor.setText (currentLabel, juce::dontSendNotification);
+    }
 
     if (showingMatrix)
     {

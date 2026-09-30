@@ -91,6 +91,41 @@ public:
         return listenChannelParameter != nullptr
             ? juce::jlimit (0, 8, juce::roundToInt (listenChannelParameter->load())) : 0;
     }
+    // SS39 (Hub-pushed presets): the heartbeat/preset-capture path needs to
+    // read these two too, not just broadcast/listen channel - see
+    // OrchDelayLink::PresetEntry's own doc comment for why.
+    bool isRelayEnabledForUi() const
+    {
+        return relayEnabledParameter != nullptr && relayEnabledParameter->load() >= 0.5f;
+    }
+    int getActiveBankForUi() const
+    {
+        return activeBankParameter != nullptr
+            ? juce::jlimit (0, 3, juce::roundToInt (activeBankParameter->load())) : 0;
+    }
+    // SS42: the real channel every note THIS instance fires (local-bank
+    // replay, autonomous fire, and relayed Remote-bank content alike) now
+    // goes out on - override if set, else whatever lastSeenChannel most
+    // recently auto-detected. audio-thread-only (lastSeenChannel is never
+    // touched off the audio thread), but reading a plain int here is the
+    // same "stale is fine, it's read-only diagnostics" reasoning the rest of
+    // this UI-getter block already relies on for non-atomic state.
+    int getResolvedOutputChannelForUi() const
+    {
+        const int override_ = outputChannelOverrideParameter != nullptr
+            ? juce::roundToInt (outputChannelOverrideParameter->load()) : 0;
+        return override_ > 0 ? juce::jlimit (1, 16, override_) : juce::jlimit (1, 16, lastSeenChannel);
+    }
+    // Raw override value (0 = auto), unlike getResolvedOutputChannelForUi's
+    // own already-resolved answer - SS39's capture/preset path needs the
+    // RAW setting (so re-sending a captured preset doesn't accidentally bake
+    // in whatever channel auto-detect happened to be sitting on at capture
+    // time), not the resolved one.
+    int getOutputChannelOverrideForUi() const
+    {
+        return outputChannelOverrideParameter != nullptr
+            ? juce::jlimit (0, 16, juce::roundToInt (outputChannelOverrideParameter->load())) : 0;
+    }
     // Bumped once (audio thread) every time ANY phrase is newly captured,
     // regardless of Broadcast Channel - OrchDelayLink's own worker thread
     // polls this the same way OrchCaptureLink polls its own take-generation
@@ -130,6 +165,41 @@ public:
     // the same async-dispatch pattern OrchDelayLink::onHubClientGone already
     // uses for its own message-thread handoff.
     void setListenChannelFromRemote (int channel);
+
+    // SS39: Hub-pushed preset apply - the Hub found this instance's own
+    // Instance Label as a match in a "preset" message (see OrchDelayLink.h's
+    // own doc comment) and is telling it to adopt all five routing settings
+    // at once (outputChannelOverride added 2026-09-28 - see PresetEntry's own
+    // doc comment for the live-rig bug this fixes). Same message-thread-
+    // marshalled, weak-ref-guarded pattern as setListenChannelFromRemote
+    // above, just five parameters instead of one. activeBankIndex is the raw
+    // AudioParameterChoice index (0=A,1=B,2=C,3=Remote), matching
+    // getActiveBankForUi()'s own range.
+    void applyPresetFromRemote (int broadcastChannel, int listenChannel, bool relayEnabled, int activeBankIndex,
+                               int outputChannelOverride);
+
+    // SS45: Hub "General Parameters" push apply - see OrchDelayLink::ShapeEntry's
+    // own doc comment for why this is unconditional (no label match), why it
+    // deliberately excludes KS Ignore Min/Max, and why it takes 7 raw scalars
+    // rather than a ShapeEntry by value (this header only forward-declares
+    // OrchDelayLink, so it can't name a nested type of it). Same message-
+    // thread-marshalled, weak-ref-guarded pattern as applyPresetFromRemote
+    // above.
+    void applyShapeFromRemote (int holdBars, int autonomousFireBars, float phraseGapBeats,
+                               float minimumInterest, float callbackProbability,
+                               bool monophonicCapture, bool ignoreKeyswitches);
+
+    // SS41: Hub-pushed full reset (see OrchDelayLink::sendResetAll's own doc
+    // comment for why this exists - Clear Bank/Clear Remote's per-instance,
+    // one-click-each reach doesn't scale to a whole rig). Clears every
+    // phrase memory bank (A, B, C AND Remote) plus any pending/open phrase
+    // on THIS instance - a genuine "start completely fresh," not just
+    // whichever single bank Clear Bank/Clear Remote would have targeted.
+    // Doesn't touch any APVTS parameter (nothing here is a saved/automatable
+    // setting, same reasoning as requestClearCaptureBank/requestClearRemoteBank
+    // above), so no message-thread marshalling is needed - just raises a
+    // flag; processBlock() performs the actual clear on the audio thread.
+    void resetAllBanksFromRemote();
 
     // Free-text identity shown in the Connection Matrix (Docs SS31) instead
     // of a bare Instance Seed number - not an APVTS parameter (no clean
@@ -206,6 +276,18 @@ private:
     std::atomic<float>* minimumInterestParameter = nullptr;
     std::atomic<float>* callbackProbabilityParameter = nullptr;
     std::atomic<float>* captureModeParameter = nullptr;
+    // SS40: keyswitch-range notes should never be treated as musical content
+    // to capture/replay/broadcast - see createParameterLayout's own doc
+    // comment on "ignoreKeyswitches" for the full story (Docs SS40).
+    std::atomic<float>* ignoreKeyswitchesParameter = nullptr;
+    std::atomic<float>* ksIgnoreMinParameter = nullptr;
+    std::atomic<float>* ksIgnoreMaxParameter = nullptr;
+    // SS43: see odly::captureEvent's own doc comment in OrchDelayLogic.h for
+    // the live-rig bug this fixes (Horn 4 sounding two-note clusters, relayed
+    // from a legato source whose captured phrase genuinely had overlapping
+    // note durations - faithful for a polyphonic destination, wrong for a
+    // monophonic one).
+    std::atomic<float>* monophonicCaptureParameter = nullptr;
     std::atomic<float>* autonomousFireBarsParameter = nullptr;
     std::atomic<float>* captureBankParameter = nullptr;
     std::atomic<float>* activeBankParameter = nullptr;
@@ -215,11 +297,27 @@ private:
     std::atomic<float>* listenChannelParameter = nullptr;
     std::atomic<float>* relayEnabledParameter = nullptr;
     std::atomic<float>* instanceSeedParameter = nullptr;
+    // SS42: see createParameterLayout's own doc comment on "outputChannelOverride"
+    // for the live-rig bug this fixes - relayed/autonomously-fired notes were
+    // going out on whichever real MIDI channel their ORIGINAL capturing
+    // instance happened to be on, not this instance's own.
+    std::atomic<float>* outputChannelOverrideParameter = nullptr;
 
     double sampleRate = 44100.0;
     double lastBlockEndPpq = 0.0;
     bool haveLastBlockEnd = false;
     bool wasPlaying = false;
+
+    // SS42: this instance's own real MIDI channel, auto-detected from real
+    // incoming note-on messages - same "0 = auto" pattern and same
+    // known-flaky-when-no-real-input-yet caveat as OrchNoteMapper's own
+    // ksGenChannelOverride/lastSeenChannel (see that plugin's own doc comment
+    // on ksGenPendingOutputChannel for the original live-rig bug this
+    // mirrors). Updated unconditionally from every real note-on seen,
+    // regardless of Bypass/Hold Bars/capture state - see processBlock's own
+    // comment at the update site for why it can't just live inside the
+    // Hold-Bars-gated capture loop.
+    int lastSeenChannel = 1;
 
     std::atomic<bool> haveTransportUi { false };
     std::atomic<int> pendingPhraseCountUi { 0 };
@@ -295,6 +393,7 @@ private:
     // own doc comment for why a direct clear from the UI would be unsafe.
     std::atomic<bool> clearCaptureBankRequested { false };
     std::atomic<bool> clearRemoteBankRequested { false };   // requestClearRemoteBank's own flag - Docs SS27
+    std::atomic<bool> resetAllBanksRequested { false };     // resetAllBanksFromRemote's own flag - Docs SS41
 
     // --- Cross-instance phrase broadcast plumbing (see OrchDelayLink / Docs
     // SS27) - two independent small mutex-guarded handoffs, one per

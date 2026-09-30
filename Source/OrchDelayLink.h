@@ -48,6 +48,25 @@ public:
     explicit OrchDelayLink (OrchDelayAudioProcessor&);
     ~OrchDelayLink() override;
 
+    // SS38 (2026-09-27): the background thread used to start unconditionally
+    // in the constructor, which also runs for any short-lived instance a
+    // VST3 host creates purely to validate/scan the plugin (a real,
+    // documented category of host behaviour, not specific to this plugin) -
+    // that scan instance got a real, permanent socket connection to whatever
+    // Hub happened to be running, heartbeating forever with whatever state
+    // it was constructed with (frozen at that moment, e.g. a pre-rename
+    // Instance Label), showing up in the Connection Matrix as an
+    // unkillable "ghost" alongside the real device even though it was never
+    // a stale/disconnected entry - it was a second, genuinely live process.
+    // Real hosts always call prepareToPlay before actually using an
+    // instance; scan/validation instances typically never do. Call this
+    // from prepareToPlay instead of starting the thread in the constructor,
+    // so a scan instance that's discarded before ever being played never
+    // opens a socket in the first place. Idempotent - safe to call on every
+    // prepareToPlay (hosts can call it more than once per instance, e.g. on
+    // a sample-rate change).
+    void start();
+
     static constexpr int kPort = 47829;
 
     enum class Mode { Client, Hub, HubPortBusy };
@@ -66,6 +85,16 @@ public:
         juce::String label;
         int broadcastChannel = 0;
         int listenChannel = 0;
+        // SS39 (Hub-pushed presets): carried in the heartbeat alongside
+        // broadcast/listen so a captured preset reflects a client's REAL
+        // current routing, not just the two fields the Matrix itself needed
+        // before this. activeBank is the raw AudioParameterChoice index
+        // (0=A,1=B,2=C,3=Remote), matching getActiveBankForUi()'s own range.
+        bool relayEnabled = false;
+        int activeBank = 0;
+        // Added 2026-09-28 alongside PresetEntry's own field - see that
+        // struct's doc comment for the live-rig bug this fixes.
+        int outputChannelOverride = 0;
         juce::int64 lastSeenMs = 0;
 
         // Opaque handle for sendSetListenChannel below (Docs SS33/click-to-
@@ -92,6 +121,115 @@ public:
     // handler) - locks connectionsMutex itself, same as every other
     // accessor here.
     void sendSetListenChannel (juce::int64 connectionId, int channel);
+
+    // SS39: Hub-pushed presets. A preset is just a routing snapshot - one
+    // entry per instance, keyed by Instance Label (the only identity every
+    // instance already carries and displays, so a saved preset stays
+    // meaningful across sessions/reconnects, unlike connectionId which is a
+    // live-socket-only handle). Entries are matched by label on the
+    // RECEIVING side (each client checks its own getInstanceLabelForUi()
+    // against every entry), not resolved to a connectionId on the way out -
+    // a preset can legitimately name an instance that isn't connected right
+    // now (saved earlier, or the rig's still loading) and it simply won't
+    // match anything yet.
+    // outputChannelOverride added 2026-09-28 (real live-rig bug): SS42 made
+    // every fired note go out on this instance's own resolved real MIDI
+    // channel instead of blindly trusting note.channel - correct, but that
+    // resolution auto-detects from real incoming note-ons (see OrchDelay
+    // Processor.h's own lastSeenChannel doc comment), and a 100%-relay-fed
+    // instance with NO live input of its own never sees one, so it stayed
+    // stuck on the hardcoded default (1) forever - every relay-fed
+    // instrument in a rig ended up dumping its entire output onto whatever
+    // real instrument sits on channel 1, exactly the "accumulation on one
+    // instrument" symptom this field exists to fix. 0 keeps auto-detect (for
+    // an instance that genuinely has live input); any other value pins it
+    // explicitly, same convention as the parameter itself.
+    struct PresetEntry
+    {
+        juce::String label;
+        int broadcastChannel = 0;
+        int listenChannel = 0;
+        bool relayEnabled = false;
+        int activeBank = 0;
+        int outputChannelOverride = 0;
+    };
+
+    // Hub-only: one entry per currently-connected client (from the same live
+    // heartbeat table getRemoteStatusesForUi() itself reads) PLUS this
+    // instance's own current routing - the Hub is a routing participant too
+    // (Docs SS31/getRemoteStatusesForUi's own doc comment) and would
+    // otherwise be silently missing from its own captured preset. Callable
+    // from the editor (message thread); locks connectionsMutex itself.
+    std::vector<PresetEntry> capturePresetForUi() const;
+
+    // Hub-only: fans the whole preset out to every connected client - each
+    // one filters to its own matching entry itself (see PresetEntry's own
+    // doc comment), so sending is a single unicast-free broadcast rather
+    // than one send per target. Also applies this instance's OWN matching
+    // entry (if present) directly via the processor, since the Hub never
+    // hears its own fan-out echoed back to itself (same asymmetry
+    // serviceOwnPublish's Hub branch already has). Callable from the editor
+    // (message thread); locks connectionsMutex itself.
+    void sendPreset (const std::vector<PresetEntry>& entries);
+
+    // SS41: Hub-pushed full reset. A routing preset (SS39 above) reconfigures
+    // where content flows; this instead wipes the actual musical content
+    // sitting in every instance's phrase memory (all of A/B/C AND Remote) in
+    // one click from wherever the user happens to be looking - the rig-wide
+    // equivalent of pressing Clear Bank (x3, one per bank) then Clear Remote
+    // on every single connected instance by hand, which is exactly the
+    // tedious click-count this exists to remove. Fans out to every connected
+    // client (unconditionally - unlike a preset, a reset applies to
+    // everyone, never filtered by label) and also applies to this instance's
+    // own banks directly, since the Hub never hears its own fan-out echoed
+    // back to itself (same asymmetry sendPreset above already has). Callable
+    // from the editor (message thread); locks connectionsMutex itself.
+    void sendResetAll();
+
+    // SS45 (2026-09-28): Hub "General Parameters" - a shared CONTENT-SHAPING
+    // template (Hold Bars, Autonomous Fire, Phrase Gap, Minimum Interest,
+    // Callback Probability, Monophonic Capture, Ignore Keyswitches on/off),
+    // pushed from the Hub's own authored sliders rather than captured from
+    // any instance's live state - unlike PresetEntry above (a per-instance
+    // routing snapshot, matched by label), this is the SAME template for
+    // every connected instance, so it carries no label at all and needs no
+    // per-instance matching on receipt - closer in spirit to sendResetAll's
+    // own unconditional broadcast than to sendPreset's label-matched one.
+    //
+    // Deliberately does NOT include KS Ignore Min/Max (real live-rig bug,
+    // 2026-09-28): those aren't a rig-wide policy at all, they're a per-
+    // instrument safety ceiling (each low instrument's own real lowest
+    // playable note) - a uniform push silently clobbered hand-tuned values
+    // (Bassoon/Bass Clarinet/etc had already been set below the 0-35
+    // default) back to the template's own number. Ignore Keyswitches itself
+    // (the on/off toggle) stays here - THAT genuinely is a uniform rig-wide
+    // policy, every instrument should have it on. If per-instrument KS
+    // ranges ever need a rig-wide tool, it needs its own mechanism that
+    // varies by instrument (like OrchNoteMapper's own Dest Max did), not a
+    // single shared number pushed to everyone.
+    struct ShapeEntry
+    {
+        int holdBars = 4;
+        int autonomousFireBars = 0;
+        float phraseGapBeats = 1.0f;
+        float minimumInterest = 0.0f;
+        float callbackProbability = 0.0f;
+        bool monophonicCapture = false;
+        bool ignoreKeyswitches = true;
+    };
+
+    // Hub-only: pushes `base` to every connected client. When `randomize` is
+    // false, every instance (including this one) gets the EXACT same
+    // ShapeEntry - a uniform rig-wide policy. When true, each instance
+    // (including this one) instead gets its OWN independently jittered copy
+    // - see sendShapeToRig's own doc comment in the .cpp for exactly which
+    // fields move and by how much (only the 5 numeric fields; the 2 bool
+    // policy switches always stay uniform, jittering a bool makes no sense).
+    // Unlike sendPreset's single shared wire message, this sends ONE message
+    // PER connection (a fresh jittered draw for each, when randomizing), so
+    // it can't reuse that broadcast-once shape. Callable from the editor
+    // (message thread); locks connectionsMutex itself.
+    void sendShapeToRig (const ShapeEntry& base, bool randomize);
 
 private:
     class ClientConnection;
@@ -132,7 +270,11 @@ private:
     // Guarded by connectionsMutex too (always touched alongside
     // serverConnections - registered/erased at the same points) rather than
     // its own mutex, to avoid any lock-ordering question between the two.
-    std::map<HubConnection*, RemoteInstanceStatus> remoteStatuses;
+    // Mutable for the same reason connectionsMutex is: getRemoteStatusesForUi()
+    // is logically read-only from the outside but internally self-prunes
+    // stale entries (see that function's own comment) - onHubClientGone's
+    // disconnect-triggered erase is not the only cleanup path.
+    mutable std::map<HubConnection*, RemoteInstanceStatus> remoteStatuses;
 
     JUCE_DECLARE_WEAK_REFERENCEABLE (OrchDelayLink)
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (OrchDelayLink)

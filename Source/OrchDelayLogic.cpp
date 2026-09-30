@@ -66,7 +66,8 @@ namespace odly
     CaptureResult captureEvent (const RawMidiEvent& event, double phraseGapBeats,
                                 int holdBars, double beatsPerBarNow,
                                 juce::int64& nextNoteSeq, int& nextPhraseId,
-                                Phrase& openPhrase)
+                                Phrase& openPhrase,
+                                bool monophonicCapture)
     {
         CaptureResult result;
 
@@ -97,6 +98,23 @@ namespace odly
 
                 openPhrase = Phrase {};
                 openPhrase.phraseId = nextPhraseId++;
+            }
+
+            // SS43: monophonic normalization - see captureEvent's own doc
+            // comment in the header for the live-rig bug this fixes. Only
+            // DIFFERENT-pitch still-open notes get cut; a same-pitch overlap
+            // is a legitimate re-strike (see the FIFO seq-matching test in
+            // OrchDelayLogicCheck), never touched here.
+            if (monophonicCapture)
+            {
+                for (auto& held : openPhrase.notes)
+                {
+                    if (! held.hasNoteOff && held.pitch != event.pitch)
+                    {
+                        held.durationPpq = juce::jmax (0.0, event.ppq - held.onsetPpq);
+                        held.hasNoteOff = true;
+                    }
+                }
             }
 
             HeldNote note;

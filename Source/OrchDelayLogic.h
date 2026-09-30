@@ -143,10 +143,31 @@ namespace odly
     // `nextNoteSeq` and `nextPhraseId` are counters owned by the caller (the
     // processor), threaded through by reference so this stays a pure
     // function with no hidden static state.
+    // `monophonicCapture` (SS43, default false - existing callers/tests using
+    // the shorter call are unaffected): a real live-rig bug (2026-09-28) -
+    // this logic captured overlapping legato content VERBATIM (a new note-on
+    // simply appends a new HeldNote; an earlier still-open DIFFERENT-pitch
+    // note keeps sounding, per its own doc comment above, until ITS real
+    // note-off eventually arrives). For genuinely polyphonic source material
+    // that's correct. But relayed to a MONOPHONIC destination instrument
+    // (Opus's own "True Legato: Mono" patches), a captured phrase with two
+    // notes' durations genuinely overlapping - exactly what a legato
+    // performance/pattern naturally produces, the next note's onset slightly
+    // before the previous note's off - gets faithfully replayed as real
+    // polyphony: two notes sounding at once on an instrument that can't
+    // voice more than one (live report: Horn 4 sounding two-note clusters,
+    // relayed from Piccolo's own captured legato line). When true, a new
+    // note-on for a DIFFERENT pitch immediately truncates every still-open
+    // (! hasNoteOff) note of a DIFFERENT pitch to end exactly at this note's
+    // own onset - the standard "next note cuts the previous" monophonic
+    // normalization. Deliberately pitch-gated: two overlapping SAME-pitch
+    // notes (a legitimate re-strike/roll, see the FIFO seq-matching test in
+    // OrchDelayLogicCheck) are left untouched either way.
     CaptureResult captureEvent (const RawMidiEvent& event, double phraseGapBeats,
                                int holdBars, double beatsPerBarNow,
                                juce::int64& nextNoteSeq, int& nextPhraseId,
-                               Phrase& openPhrase);
+                               Phrase& openPhrase,
+                               bool monophonicCapture = false);
 
     // Closes `phrase` (which must currently be open/unclosed): gives every
     // note still missing a note-off a fixed 0.5-beat fallback duration and

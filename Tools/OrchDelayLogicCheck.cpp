@@ -165,6 +165,50 @@ int main()
         check (open.notes.size() == 2, "seq discipline: a stray note-off with no match is dropped silently");
     }
 
+    // --- monophonicCapture (SS43) --------------------------------------------
+    {
+        // Default (false): a legato-overlapping DIFFERENT-pitch note-on
+        // leaves the earlier still-open note untouched - genuinely polyphonic
+        // once its own real note-off eventually arrives.
+        juce::int64 seq = 1;
+        int phraseId = 0;
+        odly::Phrase open;
+        odly::captureEvent ({ true, 1, 60, 100, 0.0 }, 1.0, 4, 4.0, seq, phraseId, open);        // note A on
+        odly::captureEvent ({ true, 1, 62, 100, 0.95 }, 1.0, 4, 4.0, seq, phraseId, open);       // note B on, slightly before A's off
+        check (! open.notes[0].hasNoteOff, "monophonicCapture off: an earlier different-pitch note stays open through a legato overlap");
+        odly::captureEvent ({ false, 1, 60, 0, 1.0 }, 1.0, 4, 4.0, seq, phraseId, open);         // A's real off
+        check (open.notes[0].hasNoteOff && std::abs (open.notes[0].durationPpq - 1.0) < 1e-9,
+              "monophonicCapture off: note A's real duration reflects its own real note-off, genuinely overlapping note B");
+    }
+    {
+        // On: the same legato overlap now truncates the earlier different-
+        // pitch note to end exactly at the new note's onset - monophonic.
+        juce::int64 seq = 1;
+        int phraseId = 0;
+        odly::Phrase open;
+        odly::captureEvent ({ true, 1, 60, 100, 0.0 }, 1.0, 4, 4.0, seq, phraseId, open, true);
+        odly::captureEvent ({ true, 1, 62, 100, 0.95 }, 1.0, 4, 4.0, seq, phraseId, open, true);
+        check (open.notes[0].hasNoteOff && std::abs (open.notes[0].durationPpq - 0.95) < 1e-9,
+              "monophonicCapture on: an earlier different-pitch note is truncated to end at the new note's own onset");
+
+        // A's real (now-stray) note-off finds no open match - dropped
+        // silently, same as any other stray note-off - and does NOT touch
+        // note B, which is still open.
+        odly::captureEvent ({ false, 1, 60, 0, 1.0 }, 1.0, 4, 4.0, seq, phraseId, open, true);
+        check (! open.notes[1].hasNoteOff,
+              "monophonicCapture on: note A's now-stray real note-off is dropped silently, note B stays open");
+
+        // Same-pitch overlap (a legitimate re-strike) is NEVER touched by
+        // monophonicCapture, on or off.
+        odly::Phrase openSamePitch;
+        juce::int64 seq2 = 1;
+        int phraseId2 = 0;
+        odly::captureEvent ({ true, 1, 60, 100, 0.0 }, 1.0, 4, 4.0, seq2, phraseId2, openSamePitch, true);
+        odly::captureEvent ({ true, 1, 60, 100, 0.1 }, 1.0, 4, 4.0, seq2, phraseId2, openSamePitch, true);
+        check (! openSamePitch.notes[0].hasNoteOff && ! openSamePitch.notes[1].hasNoteOff,
+              "monophonicCapture on: a same-pitch overlap (re-strike) is left untouched, both stay open");
+    }
+
     // --- closePhrase: fallback duration for a straddling held note ---------
     {
         odly::Phrase p;

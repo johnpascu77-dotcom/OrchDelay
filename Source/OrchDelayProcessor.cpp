@@ -50,6 +50,10 @@ OrchDelayAudioProcessor::OrchDelayAudioProcessor()
     minimumInterestParameter = parameters.getRawParameterValue ("minimumInterest");
     callbackProbabilityParameter = parameters.getRawParameterValue ("callbackProbability");
     captureModeParameter = parameters.getRawParameterValue ("captureMode");
+    ignoreKeyswitchesParameter = parameters.getRawParameterValue ("ignoreKeyswitches");
+    ksIgnoreMinParameter = parameters.getRawParameterValue ("ksIgnoreMin");
+    ksIgnoreMaxParameter = parameters.getRawParameterValue ("ksIgnoreMax");
+    monophonicCaptureParameter = parameters.getRawParameterValue ("monophonicCapture");
     autonomousFireBarsParameter = parameters.getRawParameterValue ("autonomousFireBars");
     captureBankParameter = parameters.getRawParameterValue ("captureBank");
     activeBankParameter = parameters.getRawParameterValue ("activeBank");
@@ -59,6 +63,7 @@ OrchDelayAudioProcessor::OrchDelayAudioProcessor()
     listenChannelParameter = parameters.getRawParameterValue ("listenChannel");
     relayEnabledParameter = parameters.getRawParameterValue ("relayEnabled");
     instanceSeedParameter = parameters.getRawParameterValue ("instanceSeed");
+    outputChannelOverrideParameter = parameters.getRawParameterValue ("outputChannelOverride");
 
     link = std::make_unique<OrchDelayLink> (*this);
 }
@@ -72,6 +77,12 @@ void OrchDelayAudioProcessor::prepareToPlay (double newSampleRate, int samplesPe
 {
     juce::ignoreUnused (samplesPerBlock);
     sampleRate = newSampleRate;
+
+    // SS38: only start the Link's background connection thread once we're
+    // actually being prepared for real playback - see OrchDelayLink::start's
+    // own doc comment for why this can't just run from OrchDelayLink's own
+    // constructor any more.
+    link->start();
 
     openPhrase = odly::Phrase {};
     pendingPhrases.clear();
@@ -457,6 +468,34 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     if (clearRemoteBankRequested.exchange (false))
         phraseMemoryBanks[static_cast<size_t> (kRemoteBankIndex)].clear();
 
+    // Hub-pushed full reset (Docs SS41) - see resetAllBanksFromRemote's own
+    // doc comment. Unlike the two single-bank clears above, this wipes ALL
+    // FOUR banks plus any phrase still mid-flight, so nothing pre-dating the
+    // reset can keep sounding via a still-open phrase or firing later via
+    // pendingPhrases/Autonomous Fire.
+    if (resetAllBanksRequested.exchange (false))
+    {
+        for (auto& bank : phraseMemoryBanks)
+            bank.clear();
+        pendingPhrases.clear();
+        openPhrase = odly::Phrase {};
+    }
+
+    // SS42: track this instance's own real MIDI channel from every real
+    // incoming note-on, unconditionally - deliberately NOT inside the
+    // Hold-Bars-gated capture loop further down (Hold Bars=0 pauses
+    // capturing entirely, Docs SS17, but real MIDI keeps arriving the whole
+    // time and this needs to stay current regardless), and deliberately
+    // before the Bypass early-return below so a bypassed instance's own
+    // channel identity doesn't go stale either. See lastSeenChannel's own
+    // doc comment in the header for the full story.
+    for (const auto metadata : midiMessages)
+    {
+        const auto msg = metadata.getMessage();
+        if (msg.isNoteOn())
+            lastSeenChannel = msg.getChannel();
+    }
+
     // Cross-instance phrase broadcast (see OrchDelayLink / Docs SS27): fold
     // any phrases OrchDelayLink's own connection thread has queued up since
     // the last block into the Remote bank - try_lock, never block real-time
@@ -691,12 +730,56 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
             const int captureMode = captureModeParameter != nullptr
                 ? juce::jlimit (0, 2, juce::roundToInt (captureModeParameter->load())) : odly::kCaptureReplace;
 
+            // Docs SS40 - see createParameterLayout's own doc comment on
+            // "ignoreKeyswitches" for the full story. Resolved once per
+            // block, same pattern as captureMode above.
+            const bool ignoreKeyswitches = ignoreKeyswitchesParameter != nullptr
+                && ignoreKeyswitchesParameter->load() >= 0.5f;
+            const int ksIgnoreMinRaw = ksIgnoreMinParameter != nullptr
+                ? juce::roundToInt (ksIgnoreMinParameter->load()) : 0;
+            const int ksIgnoreMaxRaw = ksIgnoreMaxParameter != nullptr
+                ? juce::roundToInt (ksIgnoreMaxParameter->load()) : 35;
+            const int ksIgnoreMin = juce::jlimit (0, 127, juce::jmin (ksIgnoreMinRaw, ksIgnoreMaxRaw));
+            const int ksIgnoreMax = juce::jlimit (0, 127, juce::jmax (ksIgnoreMinRaw, ksIgnoreMaxRaw));
+
+            // SS43 - see captureEvent's own doc comment in OrchDelayLogic.h
+            // for the full story. Resolved once per block, same pattern as
+            // ignoreKeyswitches above.
+            const bool monophonicCapture = monophonicCaptureParameter != nullptr
+                && monophonicCaptureParameter->load() >= 0.5f;
+
             // --- capture incoming note-on/note-off events into phrases ----
             for (const auto metadata : midiMessages)
             {
                 const auto msg = metadata.getMessage();
                 if (! (msg.isNoteOn() || msg.isNoteOff()))
-                    continue;   // everything else is dropped - OrchDelay only ever deals in notes
+                {
+                    // Non-note MIDI (CC, pitch bend, etc.) isn't part of the
+                    // phrase model at all - pass it straight through rather
+                    // than dropping it, so a downstream device's own CC
+                    // control (e.g. OrchNoteFilter) still receives it.
+                    output.addEvent (msg, metadata.samplePosition);
+                    continue;
+                }
+
+                if (ignoreKeyswitches)
+                {
+                    const int rawNoteNumber = juce::jlimit (0, 127, msg.getNoteNumber());
+                    if (rawNoteNumber >= ksIgnoreMin && rawNoteNumber <= ksIgnoreMax)
+                    {
+                        // Docs SS40: a keyswitch-range note is invisible to
+                        // OrchDelay's entire phrase model - never captured,
+                        // never fired, never broadcast - exactly like
+                        // non-note MIDI above. Still passed straight through
+                        // unchanged, since a real live keyswitch played
+                        // INTO this same instrument still needs to reach
+                        // OrchNoteMapper/the instrument normally; this only
+                        // stops OrchDelay itself from ever mistaking it for
+                        // music worth remembering.
+                        output.addEvent (msg, metadata.samplePosition);
+                        continue;
+                    }
+                }
 
                 odly::RawMidiEvent event;
                 event.isNoteOn = msg.isNoteOn();
@@ -709,7 +792,7 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
                     totalNotesCapturedUi.fetch_add (1);
 
                 auto result = odly::captureEvent (event, phraseGapBeats, holdBars, beatsPerBarNow,
-                                                  nextNoteSeq, nextPhraseId, openPhrase);
+                                                  nextNoteSeq, nextPhraseId, openPhrase, monophonicCapture);
 
                 if (result.phraseClosed && ! result.closedPhrase.notes.empty())
                 {
@@ -888,12 +971,19 @@ void OrchDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
                 const int onSample = juce::jlimit (0, juce::jmax (0, numSamples - 1),
                                                    juce::roundToInt ((note.outputOnsetPpq - blockStartPpq) / ppqPerSample));
 
-                output.addEvent (juce::MidiMessage::noteOn (note.channel, note.pitch,
+                // SS42: re-stamp to THIS instance's own resolved channel, not
+                // note.channel as captured - see outputChannelOverride's own
+                // doc comment in createParameterLayout for why note.channel
+                // alone (the ORIGINAL capturing instance's channel) is wrong
+                // for anything that arrived via relay.
+                const int outputChannel = getResolvedOutputChannelForUi();
+
+                output.addEvent (juce::MidiMessage::noteOn (outputChannel, note.pitch,
                                                              static_cast<juce::uint8> (juce::jlimit (1, 127, note.velocity))),
                                  onSample);
 
                 odly::ActiveFiredNote active;
-                active.channel = note.channel;
+                active.channel = outputChannel;
                 active.pitch = note.pitch;
                 active.seq = note.seq;
                 active.noteOffPpq = note.outputOffPpq;
@@ -1009,27 +1099,46 @@ void OrchDelayAudioProcessor::changeProgramName (int index, const juce::String& 
 
 void OrchDelayAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    if (auto state = parameters.copyState(); state.isValid())
-    {
-        std::unique_ptr<juce::XmlElement> xml (state.createXml());
+    // Real live-rig bug (2026-09-25/26): Instance Label survived within a
+    // running session (undo, matrix refresh, etc.) but was silently lost
+    // across an actual Bitwig project save -> quit -> reopen. The previous
+    // approach piggybacked instanceLabel as a plain XML attribute directly on
+    // the SAME root element the APVTS's own createXml() produces - tagged
+    // with parameters.state.getType(), an element name/shape the host's own
+    // VST3 state-chunk handling may specifically recognise and re-encode,
+    // dropping an attribute it doesn't itself know about in the process (a
+    // real, documented category of DAW/VST3 state-chunk behaviour, not
+    // speculation about JUCE itself). Fixed by giving OrchDelay its own
+    // top-level wrapper element instead, with the APVTS tree nested as an
+    // ordinary CHILD element and instanceLabel as an attribute on OUR OWN
+    // element, not one the host has any reason to touch specially.
+    juce::XmlElement rootXml ("OrchDelayFullState");
+    rootXml.setAttribute ("instanceLabel", getInstanceLabelForUi());
 
-        if (xml != nullptr)
-        {
-            // Instance Label (Docs SS31) isn't an APVTS parameter (see
-            // getInstanceLabelForUi's own doc comment) - piggyback it as a
-            // plain XML attribute on the same root element instead.
-            xml->setAttribute ("instanceLabel", getInstanceLabelForUi());
-            copyXmlToBinary (*xml, destData);
-        }
-    }
+    if (auto state = parameters.copyState(); state.isValid())
+        if (auto paramsXml = state.createXml())
+            rootXml.addChildElement (paramsXml.release());
+
+    copyXmlToBinary (rootXml, destData);
 }
 
 void OrchDelayAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
     std::unique_ptr<juce::XmlElement> xml (getXmlFromBinary (data, sizeInBytes));
 
-    if (xml != nullptr && xml->hasTagName (parameters.state.getType()))
+    if (xml != nullptr && xml->hasTagName ("OrchDelayFullState"))
     {
+        setInstanceLabel (xml->getStringAttribute ("instanceLabel"));
+
+        if (auto* paramsXml = xml->getChildByName (parameters.state.getType()))
+            parameters.replaceState (juce::ValueTree::fromXml (*paramsXml));
+    }
+    else if (xml != nullptr && xml->hasTagName (parameters.state.getType()))
+    {
+        // Old format (a project saved before this fix) - the label was
+        // already being lost under this shape, but the APVTS parameters
+        // themselves still read back fine, so an old save doesn't lose
+        // anything beyond what it had already lost.
         setInstanceLabel (xml->getStringAttribute ("instanceLabel"));
         parameters.replaceState (juce::ValueTree::fromXml (*xml));
     }
@@ -1066,6 +1175,14 @@ void OrchDelayAudioProcessor::requestClearCaptureBank()
 void OrchDelayAudioProcessor::requestClearRemoteBank()
 {
     clearRemoteBankRequested.store (true);
+}
+
+void OrchDelayAudioProcessor::resetAllBanksFromRemote()
+{
+    // Just raises a flag, same as requestClearCaptureBank/requestClearRemoteBank
+    // above - see this method's own doc comment in the header for why the
+    // actual clear has to happen on the audio thread instead.
+    resetAllBanksRequested.store (true);
 }
 
 odly::MemoryEntry OrchDelayAudioProcessor::snapshotLastCapturedForBroadcast() const
@@ -1107,6 +1224,57 @@ void OrchDelayAudioProcessor::setListenChannelFromRemote (int channel)
     });
 }
 
+void OrchDelayAudioProcessor::applyPresetFromRemote (int broadcastChannel, int listenChannel, bool relayEnabled, int activeBankIndex,
+                                                     int outputChannelOverride)
+{
+    juce::WeakReference<OrchDelayAudioProcessor> weak (this);
+    juce::MessageManager::callAsync ([weak, broadcastChannel, listenChannel, relayEnabled, activeBankIndex, outputChannelOverride]
+    {
+        if (auto* self = weak.get())
+        {
+            if (auto* param = dynamic_cast<juce::RangedAudioParameter*> (self->parameters.getParameter ("broadcastChannel")))
+                param->setValueNotifyingHost (param->convertTo0to1 (static_cast<float> (broadcastChannel)));
+            if (auto* param = dynamic_cast<juce::RangedAudioParameter*> (self->parameters.getParameter ("listenChannel")))
+                param->setValueNotifyingHost (param->convertTo0to1 (static_cast<float> (listenChannel)));
+            if (auto* param = dynamic_cast<juce::RangedAudioParameter*> (self->parameters.getParameter ("relayEnabled")))
+                param->setValueNotifyingHost (relayEnabled ? 1.0f : 0.0f);
+            if (auto* param = dynamic_cast<juce::RangedAudioParameter*> (self->parameters.getParameter ("activeBank")))
+                param->setValueNotifyingHost (param->convertTo0to1 (static_cast<float> (activeBankIndex)));
+            if (auto* param = dynamic_cast<juce::RangedAudioParameter*> (self->parameters.getParameter ("outputChannelOverride")))
+                param->setValueNotifyingHost (param->convertTo0to1 (static_cast<float> (outputChannelOverride)));
+        }
+    });
+}
+
+void OrchDelayAudioProcessor::applyShapeFromRemote (int holdBars, int autonomousFireBars, float phraseGapBeats,
+                                                    float minimumInterest, float callbackProbability,
+                                                    bool monophonicCapture, bool ignoreKeyswitches)
+{
+    juce::WeakReference<OrchDelayAudioProcessor> weak (this);
+    juce::MessageManager::callAsync ([weak, holdBars, autonomousFireBars, phraseGapBeats,
+                                      minimumInterest, callbackProbability, monophonicCapture,
+                                      ignoreKeyswitches]
+    {
+        if (auto* self = weak.get())
+        {
+            if (auto* param = dynamic_cast<juce::RangedAudioParameter*> (self->parameters.getParameter ("holdBars")))
+                param->setValueNotifyingHost (param->convertTo0to1 (static_cast<float> (holdBars)));
+            if (auto* param = dynamic_cast<juce::RangedAudioParameter*> (self->parameters.getParameter ("autonomousFireBars")))
+                param->setValueNotifyingHost (param->convertTo0to1 (static_cast<float> (autonomousFireBars)));
+            if (auto* param = dynamic_cast<juce::RangedAudioParameter*> (self->parameters.getParameter ("phraseGapBeats")))
+                param->setValueNotifyingHost (param->convertTo0to1 (phraseGapBeats));
+            if (auto* param = dynamic_cast<juce::RangedAudioParameter*> (self->parameters.getParameter ("minimumInterest")))
+                param->setValueNotifyingHost (param->convertTo0to1 (minimumInterest));
+            if (auto* param = dynamic_cast<juce::RangedAudioParameter*> (self->parameters.getParameter ("callbackProbability")))
+                param->setValueNotifyingHost (param->convertTo0to1 (callbackProbability));
+            if (auto* param = dynamic_cast<juce::RangedAudioParameter*> (self->parameters.getParameter ("monophonicCapture")))
+                param->setValueNotifyingHost (monophonicCapture ? 1.0f : 0.0f);
+            if (auto* param = dynamic_cast<juce::RangedAudioParameter*> (self->parameters.getParameter ("ignoreKeyswitches")))
+                param->setValueNotifyingHost (ignoreKeyswitches ? 1.0f : 0.0f);
+        }
+    });
+}
+
 juce::String OrchDelayAudioProcessor::getInstanceLabelForUi() const
 {
     std::lock_guard<std::mutex> lock (instanceLabelMutex);
@@ -1140,6 +1308,71 @@ juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::cre
         "Capture Mode",
         juce::StringArray { "Replace", "Overlay", "Duck" },
         0));
+
+    // Docs SS40 (2026-09-27): a real live-rig bug traced to OrchDelay having
+    // no concept at all of "this note range is a keyswitch, not music" -
+    // OrchNoteMapper's own KS Generator (downstream on the SAME chain, see
+    // its own doc comment) periodically fires notes in a instrument-specific
+    // destination band (e.g. 24-35, or 60-71 for a low instrument's HIGH KS
+    // zone) purely to drive Opus's own articulation switching, never meant
+    // to be heard as a note in its own right. OrchDelay, having no KS
+    // awareness of its own, could end up treating one of these as ordinary
+    // captured content - once broadcast over the relay network to OTHER
+    // instruments (Docs SS27), a destination band that's silent/inaudible
+    // keyswitch territory for the originating instrument can land squarely
+    // in another instrument's own REAL playable range, firing back as a
+    // genuinely audible, uninvited note with no relationship to anything
+    // OrchConductor's own gating ever intended to sound - and since it never
+    // passed through the receiving instrument's own OrchGate as "new
+    // musical content from this instrument", closing that instrument's own
+    // gate does nothing to stop it. This is the mirror image of OrchGate's
+    // own "Pass Keyswitches" (which always LETS a keyswitch range through
+    // regardless of gate state) - here the SAME range should never be
+    // treated as content to capture/replay/broadcast in the first place.
+    // Defaults ON with the same 0-35 range OrchGate itself defaults to
+    // (the unified low keyswitch zone), matching the exact case that
+    // exposed this - widen per instance if a specific rig also relays a
+    // higher destination band (e.g. a low instrument's 60-71 HIGH KS zone).
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "ignoreKeyswitches", 1 },
+        "Ignore Keyswitches",
+        true));
+
+    params.push_back (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { "ksIgnoreMin", 1 },
+        "KS Ignore Min",
+        0, 127, 0));
+
+    params.push_back (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { "ksIgnoreMax", 1 },
+        "KS Ignore Max",
+        0, 127, 35));
+
+    // SS43 (2026-09-28) - real live-rig bug: this device's capture logic
+    // (odly::captureEvent) recorded overlapping legato content verbatim - a
+    // new note-on simply opens a new HeldNote, an earlier still-open
+    // DIFFERENT-pitch note keeps sounding in the captured phrase until its
+    // own real note-off eventually arrives. Correct for genuinely polyphonic
+    // source material, but relayed to a MONOPHONIC destination (Opus's own
+    // "True Legato: Mono" patches), a phrase with two notes' durations
+    // genuinely overlapping - exactly what an ordinary legato performance or
+    // pattern naturally produces - gets faithfully replayed as real
+    // polyphony: two notes sounding at once on an instrument that can't
+    // voice more than one (Horn 4 sounding two-note clusters, relayed from
+    // Piccolo's own captured legato line - confirmed via the Connection
+    // Matrix that Piccolo was the ONLY broadcaster into Horn 4's Listen
+    // Channel, ruling out a many-to-one relay collision). Off by default -
+    // this device is also used on genuinely polyphonic material elsewhere in
+    // a rig (e.g. a solo piano/harp line), where truncating an overlapping
+    // note would be a real regression, not a fix. Turn on per-instance for
+    // anything modeled as a monophonic player (every solo wind/brass/string
+    // desk in this rig). See captureEvent's own doc comment in
+    // OrchDelayLogic.h for exactly what "cuts" and what doesn't (a same-pitch
+    // overlap is a legitimate re-strike, never touched).
+    params.push_back (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { "monophonicCapture", 1 },
+        "Monophonic Capture",
+        false));
 
     // Lets the device fire from its own memory pool on its own clock,
     // entirely independent of new incoming MIDI, once seeded with at least
@@ -1644,6 +1877,42 @@ juce::AudioProcessorValueTreeState::ParameterLayout OrchDelayAudioProcessor::cre
         juce::ParameterID { "instanceSeed", 1 },
         "Instance Seed",
         0, 127, 0));
+
+    // SS42 (2026-09-28) - real live-rig bug: every note this instance FIRES
+    // from memory (local-bank replay, Autonomous Fire, and relayed Remote-
+    // bank content alike - see the fire loop in processBlock, right where it
+    // reads `note.channel`) went out on whichever real MIDI channel its
+    // ORIGINAL capturing instance happened to be on, because that channel is
+    // baked into the note the moment it's captured and never touched again -
+    // correct for this instance's OWN local content (it was captured on this
+    // same track, so the channel already matches), but meaningless once a
+    // phrase has been relayed to a DIFFERENT instance over the network: that
+    // instance's own downstream VEPro routing is on a different real channel
+    // entirely, so firing the relayed content on the SENDER's channel landed
+    // it on whatever ELSE was on that channel - manifesting as polyphony in
+    // an otherwise-monophonic instrument (Horn 4 sounding two notes at once,
+    // 2026-09-28 live report) or as another instrument's content appearing to
+    // "leak" with no misconfiguration anywhere to find, since every per-
+    // instance setting genuinely WAS correct. This is the real mechanism
+    // behind the whole channel-4/channel-9/channel-11 mystery chased earlier
+    // this session - not a config error, an architecture gap: nothing ever
+    // re-stamped a relayed note to the RECEIVING instance's own channel.
+    //
+    // Fix: this instance now tracks its own real MIDI channel the same way
+    // OrchNoteMapper's KS Generator already does (see that plugin's own
+    // ksGenChannelOverride/lastSeenChannel), auto-detected from real incoming
+    // note-ons - unconditionally, regardless of Bypass/Hold Bars/capture
+    // state, so it can't go stale just because capturing happens to be
+    // paused (see processBlock's own comment at the update site). Every note
+    // this instance FIRES from memory is re-stamped to this resolved channel
+    // before going out, regardless of where the phrase originally came from.
+    // 0 = auto (same "no real input yet" caveat as OrchNoteMapper's own
+    // override - an explicit value sidesteps the timing dependency entirely
+    // for an instrument with sparse/no live input).
+    params.push_back (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { "outputChannelOverride", 1 },
+        "Output Channel (0 = auto)",
+        0, 16, 0));
 
     return { params.begin(), params.end() };
 }

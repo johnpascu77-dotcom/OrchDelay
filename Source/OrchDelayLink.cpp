@@ -9,6 +9,14 @@ namespace
     constexpr int kPollMs = 300;             // worker loop interval - see OrchDelayLink.h's own doc comment
     constexpr int kConnectTimeoutMs = 300;   // blocking connect - worker thread only, never the message thread
 
+    // Heartbeats arrive every kPollMs (300ms) from a live client. 10x that
+    // comfortably tolerates thread-scheduling jitter or an occasional missed
+    // tick while still cleaning up promptly if a client's connection died
+    // without a clean disconnect signal - onHubClientGone's erase-on-
+    // connectionLost is not the only cleanup path (see remoteStatuses' own
+    // doc comment in the header for why a second path is needed at all).
+    constexpr juce::int64 kHeartbeatStaleMs = 3000;
+
     void sendJson (juce::InterprocessConnection& connection, const juce::var& value)
     {
         const auto json = juce::JSON::toString (value, true);
@@ -28,14 +36,20 @@ namespace
 
     // Connection Matrix identity ping (Docs SS31) - deliberately a separate
     // message shape from phraseMessageFrom's own, never carrying note data,
-    // so it stays tiny even sent every poll interval.
-    juce::var heartbeatMessageFrom (const juce::String& label, int broadcastChannel, int listenChannel)
+    // so it stays tiny even sent every poll interval. Carries relay/bank too
+    // (SS39) so a Hub-captured preset reflects a client's real full routing,
+    // not just the two fields the Matrix itself ever needed before this.
+    juce::var heartbeatMessageFrom (const juce::String& label, int broadcastChannel, int listenChannel,
+                                     bool relayEnabled, int activeBank, int outputChannelOverride)
     {
         auto* obj = new juce::DynamicObject();
         obj->setProperty ("t", "heartbeat");
         obj->setProperty ("label", label);
         obj->setProperty ("bc", broadcastChannel);
         obj->setProperty ("lc", listenChannel);
+        obj->setProperty ("relay", relayEnabled);
+        obj->setProperty ("bank", activeBank);
+        obj->setProperty ("outCh", outputChannelOverride);
         return juce::var (obj);
     }
 
@@ -48,6 +62,91 @@ namespace
         obj->setProperty ("t", "setListen");
         obj->setProperty ("ch", channel);
         return juce::var (obj);
+    }
+
+    // Hub-pushed preset (SS39) - fanned out to every connected client, each
+    // one filtering to its own matching entry by label (see
+    // OrchDelayLink::PresetEntry's own doc comment).
+    juce::var presetMessageFrom (const std::vector<OrchDelayLink::PresetEntry>& entries)
+    {
+        auto* root = new juce::DynamicObject();
+        root->setProperty ("t", "preset");
+
+        juce::Array<juce::var> entriesVar;
+        for (const auto& entry : entries)
+        {
+            auto* obj = new juce::DynamicObject();
+            obj->setProperty ("label", entry.label);
+            obj->setProperty ("bc", entry.broadcastChannel);
+            obj->setProperty ("lc", entry.listenChannel);
+            obj->setProperty ("relay", entry.relayEnabled);
+            obj->setProperty ("bank", entry.activeBank);
+            obj->setProperty ("outCh", entry.outputChannelOverride);
+            entriesVar.add (juce::var (obj));
+        }
+        root->setProperty ("entries", entriesVar);
+        return juce::var (root);
+    }
+
+    // Hub-pushed full reset (SS41) - deliberately carries no payload at all
+    // (unlike presetMessageFrom above, there's nothing to filter by label:
+    // every client wipes its own banks unconditionally on receipt).
+    juce::var resetMessageFrom()
+    {
+        auto* obj = new juce::DynamicObject();
+        obj->setProperty ("t", "reset");
+        return juce::var (obj);
+    }
+
+    // Hub "General Parameters" push (SS45) - see OrchDelayLink::ShapeEntry's
+    // own doc comment. Flat, no label/entries array - unconditional like
+    // resetMessageFrom above, just carrying a real payload this time.
+    juce::var shapeMessageFrom (const OrchDelayLink::ShapeEntry& shape)
+    {
+        auto* obj = new juce::DynamicObject();
+        obj->setProperty ("t", "shape");
+        obj->setProperty ("holdBars", shape.holdBars);
+        obj->setProperty ("autonomousFireBars", shape.autonomousFireBars);
+        obj->setProperty ("phraseGapBeats", shape.phraseGapBeats);
+        obj->setProperty ("minimumInterest", shape.minimumInterest);
+        obj->setProperty ("callbackProbability", shape.callbackProbability);
+        obj->setProperty ("monophonicCapture", shape.monophonicCapture);
+        obj->setProperty ("ignoreKeyswitches", shape.ignoreKeyswitches);
+        return juce::var (obj);
+    }
+
+    OrchDelayLink::ShapeEntry shapeEntryFromVar (const juce::var& v)
+    {
+        OrchDelayLink::ShapeEntry shape;
+        shape.holdBars = static_cast<int> (v.getProperty ("holdBars", shape.holdBars));
+        shape.autonomousFireBars = static_cast<int> (v.getProperty ("autonomousFireBars", shape.autonomousFireBars));
+        shape.phraseGapBeats = static_cast<float> (static_cast<double> (v.getProperty ("phraseGapBeats", shape.phraseGapBeats)));
+        shape.minimumInterest = static_cast<float> (static_cast<double> (v.getProperty ("minimumInterest", shape.minimumInterest)));
+        shape.callbackProbability = static_cast<float> (static_cast<double> (v.getProperty ("callbackProbability", shape.callbackProbability)));
+        shape.monophonicCapture = static_cast<bool> (v.getProperty ("monophonicCapture", shape.monophonicCapture));
+        shape.ignoreKeyswitches = static_cast<bool> (v.getProperty ("ignoreKeyswitches", shape.ignoreKeyswitches));
+        return shape;
+    }
+
+    // Randomize & Send (SS45) - only the 5 numeric fields move, and only by a
+    // musically-sensible span per field; the 2 bool policy switches
+    // (Monophonic Capture, Ignore Keyswitches) always pass through uniform -
+    // see sendShapeToRig's own doc comment for why.
+    OrchDelayLink::ShapeEntry jitterShapeEntry (const OrchDelayLink::ShapeEntry& base)
+    {
+        auto& rng = juce::Random::getSystemRandom();
+        OrchDelayLink::ShapeEntry out = base;
+
+        out.holdBars = juce::jlimit (0, 16, base.holdBars + rng.nextInt (juce::Range<int> (-2, 3)));
+        out.autonomousFireBars = juce::jlimit (0, 16, base.autonomousFireBars + rng.nextInt (juce::Range<int> (-1, 2)));
+        out.phraseGapBeats = juce::jlimit (0.25f, 8.0f,
+            base.phraseGapBeats + (rng.nextFloat() * 2.0f - 1.0f) * 0.5f);
+        out.minimumInterest = juce::jlimit (0.0f, 100.0f,
+            base.minimumInterest + (rng.nextFloat() * 2.0f - 1.0f) * 10.0f);
+        out.callbackProbability = juce::jlimit (0.0f, 100.0f,
+            base.callbackProbability + (rng.nextFloat() * 2.0f - 1.0f) * 15.0f);
+
+        return out;
     }
 }
 
@@ -90,6 +189,61 @@ public:
             // OrchDelayAudioProcessor::setListenChannelFromRemote's own doc
             // comment.
             owner.processor.setListenChannelFromRemote (static_cast<int> (parsed.getProperty ("ch", 0)));
+            return;
+        }
+
+        if (type == "preset")
+        {
+            // Hub-pushed preset (SS39): find the ONE entry (if any) whose
+            // label matches this instance's own - a preset names every
+            // instance in the rig, but each client only ever acts on its own
+            // row. Case-insensitive: labels are free-text the user typed,
+            // not a normalised identifier, so "Violin 1" and "VIOLIN 1"
+            // should both match the same instance rather than silently
+            // missing it over a casing difference.
+            const auto ownLabel = owner.processor.getInstanceLabelForUi();
+            if (auto* entries = parsed.getProperty ("entries", juce::var()).getArray())
+            {
+                for (const auto& entryVar : *entries)
+                {
+                    if (! entryVar.getProperty ("label", juce::var()).toString().equalsIgnoreCase (ownLabel))
+                        continue;
+
+                    owner.processor.applyPresetFromRemote (
+                        static_cast<int> (entryVar.getProperty ("bc", 0)),
+                        static_cast<int> (entryVar.getProperty ("lc", 0)),
+                        static_cast<bool> (entryVar.getProperty ("relay", false)),
+                        static_cast<int> (entryVar.getProperty ("bank", 0)),
+                        static_cast<int> (entryVar.getProperty ("outCh", 0)));
+                    break;
+                }
+            }
+            return;
+        }
+
+        if (type == "reset")
+        {
+            // Hub-pushed full reset (SS41): unconditional, no label match
+            // needed - every client wipes its own banks on receipt.
+            owner.processor.resetAllBanksFromRemote();
+            return;
+        }
+
+        if (type == "shape")
+        {
+            // Hub "General Parameters" push (SS45): unconditional, same as
+            // "reset" above - every client applies whatever this specific
+            // message carries (the Hub already resolved uniform vs jittered
+            // per-target before sending, see sendShapeToRig). Unpacked into
+            // scalars at the call boundary, same as applyPresetFromRemote's
+            // own 4-scalar signature - OrchDelayProcessor.h only forward-
+            // declares OrchDelayLink, so it can't reference a nested type of
+            // it (ShapeEntry) directly.
+            const auto shape = shapeEntryFromVar (parsed);
+            owner.processor.applyShapeFromRemote (
+                shape.holdBars, shape.autonomousFireBars, shape.phraseGapBeats,
+                shape.minimumInterest, shape.callbackProbability,
+                shape.monophonicCapture, shape.ignoreKeyswitches);
             return;
         }
 
@@ -158,7 +312,12 @@ private:
 OrchDelayLink::OrchDelayLink (OrchDelayAudioProcessor& p)
     : juce::Thread ("OrchDelay link"), processor (p)
 {
-    startThread (juce::Thread::Priority::background);
+}
+
+void OrchDelayLink::start()
+{
+    if (! isThreadRunning())
+        startThread (juce::Thread::Priority::background);
 }
 
 OrchDelayLink::~OrchDelayLink()
@@ -366,7 +525,10 @@ void OrchDelayLink::serviceHeartbeat()
 
     const auto message = heartbeatMessageFrom (processor.getInstanceLabelForUi(),
                                                processor.getBroadcastChannelForUi(),
-                                               processor.getListenChannelForUi());
+                                               processor.getListenChannelForUi(),
+                                               processor.isRelayEnabledForUi(),
+                                               processor.getActiveBankForUi(),
+                                               processor.getOutputChannelOverrideForUi());
     sendJson (*client, message);
 }
 
@@ -391,6 +553,9 @@ void OrchDelayLink::onHubClientMessage (HubConnection* sender, const juce::var& 
         status.label = message.getProperty ("label", "").toString();
         status.broadcastChannel = static_cast<int> (message.getProperty ("bc", 0));
         status.listenChannel = static_cast<int> (message.getProperty ("lc", 0));
+        status.relayEnabled = static_cast<bool> (message.getProperty ("relay", false));
+        status.activeBank = static_cast<int> (message.getProperty ("bank", 0));
+        status.outputChannelOverride = static_cast<int> (message.getProperty ("outCh", 0));
         status.lastSeenMs = juce::Time::currentTimeMillis();
         status.connectionId = reinterpret_cast<juce::int64> (sender);
 
@@ -450,6 +615,26 @@ std::vector<OrchDelayLink::RemoteInstanceStatus> OrchDelayLink::getRemoteStatuse
     // Called only from the editor (message thread) - blocking lock is fine,
     // same reasoning as every other non-audio-thread accessor in this file.
     std::lock_guard<std::mutex> lock (connectionsMutex);
+
+    // Self-prune stale entries before building the result - a real live-rig
+    // bug (2026-09-25/26): onHubClientGone's erase only fires on a clean TCP
+    // disconnect signal. A client instance torn down/reloaded abruptly by the
+    // host (plugin rescan, project reopen, Bitwig's own device-panel
+    // suspend/resume cycling) can vanish without ever signalling that,
+    // leaving its old entry in remoteStatuses forever - duplicate/stale rows
+    // in the Connection Matrix (a reconnected instance shows up as a SECOND
+    // row, the original left showing whatever label/channels it had at the
+    // moment it went silent) that accumulate the longer a session runs.
+    const juce::int64 nowMs = juce::Time::currentTimeMillis();
+
+    for (auto it = remoteStatuses.begin(); it != remoteStatuses.end(); )
+    {
+        if (nowMs - it->second.lastSeenMs > kHeartbeatStaleMs)
+            it = remoteStatuses.erase (it);
+        else
+            ++it;
+    }
+
     std::vector<RemoteInstanceStatus> result;
     result.reserve (remoteStatuses.size());
     for (const auto& [connection, status] : remoteStatuses)
@@ -474,4 +659,108 @@ void OrchDelayLink::sendSetListenChannel (juce::int64 connectionId, int channel)
     }
     // Not found - the target disconnected between the matrix snapshot and
     // the click. Safe no-op, see this method's own doc comment.
+}
+
+std::vector<OrchDelayLink::PresetEntry> OrchDelayLink::capturePresetForUi() const
+{
+    std::vector<PresetEntry> entries;
+
+    // This instance's own current routing first - it's a routing
+    // participant too (see this method's own doc comment in the header) and
+    // would otherwise be silently missing from its own captured preset.
+    {
+        PresetEntry own;
+        own.label = processor.getInstanceLabelForUi();
+        own.broadcastChannel = processor.getBroadcastChannelForUi();
+        own.listenChannel = processor.getListenChannelForUi();
+        own.relayEnabled = processor.isRelayEnabledForUi();
+        own.activeBank = processor.getActiveBankForUi();
+        own.outputChannelOverride = processor.getOutputChannelOverrideForUi();
+        entries.push_back (own);
+    }
+
+    for (const auto& status : getRemoteStatusesForUi())
+    {
+        PresetEntry entry;
+        entry.label = status.label;
+        entry.broadcastChannel = status.broadcastChannel;
+        entry.listenChannel = status.listenChannel;
+        entry.relayEnabled = status.relayEnabled;
+        entry.activeBank = status.activeBank;
+        entry.outputChannelOverride = status.outputChannelOverride;
+        entries.push_back (entry);
+    }
+
+    return entries;
+}
+
+void OrchDelayLink::sendPreset (const std::vector<PresetEntry>& entries)
+{
+    const auto message = presetMessageFrom (entries);
+
+    {
+        std::lock_guard<std::mutex> lock (connectionsMutex);
+        for (auto& connection : serverConnections)
+            sendJson (*connection, message);
+    }
+
+    // The Hub never hears its own fan-out echoed back to itself (same
+    // asymmetry serviceOwnPublish's Hub branch already has for phrases) - so
+    // apply this instance's own matching entry directly instead, exactly the
+    // same way a client would filter for it on the receiving end.
+    const auto ownLabel = processor.getInstanceLabelForUi();
+    for (const auto& entry : entries)
+    {
+        if (! entry.label.equalsIgnoreCase (ownLabel))
+            continue;
+
+        processor.applyPresetFromRemote (entry.broadcastChannel, entry.listenChannel,
+                                          entry.relayEnabled, entry.activeBank,
+                                          entry.outputChannelOverride);
+        break;
+    }
+}
+
+void OrchDelayLink::sendResetAll()
+{
+    const auto message = resetMessageFrom();
+
+    {
+        std::lock_guard<std::mutex> lock (connectionsMutex);
+        for (auto& connection : serverConnections)
+            sendJson (*connection, message);
+    }
+
+    // Same asymmetry as sendPreset above - the Hub never hears its own
+    // fan-out echoed back to itself, so apply the reset to this instance's
+    // own banks directly instead.
+    processor.resetAllBanksFromRemote();
+}
+
+void OrchDelayLink::sendShapeToRig (const ShapeEntry& base, bool randomize)
+{
+    // One message PER connection, not one shared broadcast - unlike
+    // sendPreset/sendResetAll above, Randomize needs a genuinely different
+    // draw for each target (see jitterShapeEntry's own doc comment); the
+    // uniform (non-randomize) path just happens to send the same payload
+    // every time, which is still correct to do per-connection rather than
+    // precomputing one shared juce::var, since it keeps this one code path
+    // covering both cases.
+    {
+        std::lock_guard<std::mutex> lock (connectionsMutex);
+        for (auto& connection : serverConnections)
+        {
+            const auto shape = randomize ? jitterShapeEntry (base) : base;
+            sendJson (*connection, shapeMessageFrom (shape));
+        }
+    }
+
+    // Same asymmetry as sendPreset/sendResetAll above - the Hub never hears
+    // its own fan-out echoed back to itself, so apply this instance's own
+    // (independently jittered, if randomizing) copy directly instead.
+    const auto ownShape = randomize ? jitterShapeEntry (base) : base;
+    processor.applyShapeFromRemote (
+        ownShape.holdBars, ownShape.autonomousFireBars, ownShape.phraseGapBeats,
+        ownShape.minimumInterest, ownShape.callbackProbability,
+        ownShape.monophonicCapture, ownShape.ignoreKeyswitches);
 }
