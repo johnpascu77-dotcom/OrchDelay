@@ -117,13 +117,14 @@
   </div>
 
   <p class="lede">
-    29 real parameters, one static view — big enough that this guide switches from one marker per control to one
+    47 real parameters, one static view — big enough that this guide switches from one marker per control to one
     marker per <strong>region</strong>, with full tables underneath carrying the exhaustive detail. Live notes are
     captured into a buffer and echoed back exactly once (no looping/feedback), optionally transposed, retrograded,
     inverted, rotated, truncated, transformed by M7, time-stretched, or interval-scaled — either an explicit manual
     choice or a seeded, phrase-content-aware proposal. A 4-slot memory system (3 local banks + phrases received from
     <em>other</em> OrchDelay instances) lets it echo something other than just the most recent phrase, on demand or
-    entirely on its own clock.
+    entirely on its own clock. A Hub instance can also push a shared content-shaping template — and a one-click full
+    memory reset — to every connected instance in the rig at once; see §05.
   </p>
 
   <div class="section-head"><span class="num">01</span><h2>The Editor</h2><div class="rule"></div></div>
@@ -267,16 +268,106 @@
   </ol>
   <p class="section-note">Multiple independent broadcaster/listener groups can share the same one Hub without cross-talk, each isolated on its own channel number — like several stations sharing one transmission tower. An instance's own Broadcast Channel and Listen Channel are independent, so it can also listen on one channel while publishing what it does with that material on a different one, chaining instances into a relay rather than only a star topology.</p>
 
-  <div class="section-head"><span class="num">05</span><h2>Full Parameter Table</h2><div class="rule"></div></div>
-  <p class="section-note">All 29 parameters are host-automatable APVTS parameters — there is no plugin-internal state hidden from automation, unlike some of this plugin's denser siblings.</p>
+  <div class="section-head"><span class="num">05</span><h2>Hub-Wide Controls &amp; Relay-Safety Parameters</h2><div class="rule"></div></div>
+  <p class="section-note">
+    Added after the original capture-and-echo core went live, driven by real problems found running a large
+    multi-instance rig over the cross-instance broadcast network (§04): getting a tangled-up rig back to a known
+    state without 40 rounds of manual clicking, and keeping keyswitch/monophonic behavior correct once phrase
+    content starts crossing between instruments rather than staying local to the instance that captured it.
+  </p>
+
+  <div class="subhead">Reset All Instances (Hub Presets)</div>
+  <p class="section-note">
+    One button, Hub-only, under the existing Hub Presets header. Unlike the routing preset above it (label-matched
+    to each instance's own Instance Label), this is an unconditional broadcast — no label matching, every connected
+    instance gets it including the Hub itself. Wipes all 4 phrase memory banks (A/B/C/Remote) plus any still-open or
+    pending phrase, everywhere, in one click — the fast way back to a clean baseline mid-session instead of
+    reopening every instance's own panel.
+  </p>
+
+  <div class="subhead">General Parameters (send to rig)</div>
+  <p class="section-note">
+    A second Hub-only section, below Hub Presets: one shared content-shaping template, pushed to every connected
+    instance at once instead of dialing in 7 fields on each of dozens of instances by hand. <b>Send to Rig</b>
+    pushes the template verbatim, uniform across the whole rig. <b>Randomize &amp; Send</b> pushes the same
+    template but draws an independent jittered value per instance for the 5 numeric fields — so a rig-wide push
+    still ends up sounding like an ensemble instead of dozens of identical clones.
+  </p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Field</th><th>Randomize &amp; Send jitter</th><th>Clamped to</th></tr></thead>
+      <tbody>
+        <tr><td class="pid">Hold Bars</td><td class="desc">±2</td><td class="range">0–16</td></tr>
+        <tr><td class="pid">Autonomous Fire (bars)</td><td class="desc">±1</td><td class="range">0–16</td></tr>
+        <tr><td class="pid">Phrase Gap (beats)</td><td class="desc">±0.5</td><td class="range">0.25–8.0</td></tr>
+        <tr><td class="pid">Minimum Interest</td><td class="desc">±10%</td><td class="range">0–100%</td></tr>
+        <tr><td class="pid">Callback Probability</td><td class="desc">±15%</td><td class="range">0–100%</td></tr>
+        <tr><td class="pid">Monophonic Capture</td><td class="desc">always uniform — no partial jitter for a bool policy switch</td><td class="range">Off/On</td></tr>
+        <tr><td class="pid">Ignore Keyswitches</td><td class="desc">always uniform — same reason</td><td class="range">Off/On</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="readout-note">
+    <div class="dot"></div>
+    <p><b>KS Ignore Min/Max are deliberately never part of this push.</b> A real live-rig incident: those two fields
+    had already been hand-tuned per instrument (a low instrument's own real keyswitch band differs from the shared
+    default), and a uniform rig-wide send silently overwrote that tuning back to the default 0–35 range. They stay
+    a purely per-instance setting, set individually on each instance's own panel like any other instrument-specific
+    value — see the table below.</p>
+  </div>
+
+  <div class="subhead">Monophonic Capture <span class="mono" style="font-size:.7rem; color:var(--text-faint);">— per instance, off by default</span></div>
+  <p class="section-note">
+    When on, an earlier still-open note of a <em>different</em> pitch is truncated to end right at a new note-on,
+    instead of being captured as genuinely overlapping. Fixes a real symptom: a phrase captured from ordinary live
+    legato playing (or relayed from another instance's own legato line) faithfully preserves two notes' durations
+    overlapping, and replayed onto a monophonic destination patch (Opus's own "True Legato: Mono" articulations),
+    that comes out as real two-note polyphony on an instrument that can only voice one note at a time. A
+    same-pitch overlap or re-strike is always exempt — never truncated. Turn on for every solo wind/brass/string
+    desk in a rig; leave off anywhere genuinely polyphonic material passes through (a solo piano/harp line, for
+    instance).
+  </p>
+
+  <div class="subhead">Ignore Keyswitches / KS Ignore Min / KS Ignore Max <span class="mono" style="font-size:.7rem; color:var(--text-faint);">— per instance, Ignore Keyswitches on by default</span></div>
+  <p class="section-note">
+    OrchDelay has no innate concept of "this note range is a keyswitch, not music." Downstream, a keyswitch
+    generator (e.g. OrchNoteMapper's own KS Generator) periodically fires brief notes in an instrument-specific
+    destination band purely to drive articulation switching — silent/inaudible territory for the instrument that
+    originated it, but landing squarely inside a <em>different</em> instrument's real playable range once relayed
+    over the broadcast network (§04), sounding as a genuine, uninvited note with no relationship to anything
+    OrchConductor's own gating intended. When Ignore Keyswitches is on, any incoming note inside [KS Ignore Min, KS
+    Ignore Max] is never captured, replayed, or broadcast as musical content. Defaults to the 0–35 unified low
+    keyswitch zone (matching OrchGate's own default) — widen or move the range per instance for anything that also
+    relays a different destination band (e.g. a low instrument's own high-KS zone).
+  </p>
+
+  <div class="subhead">Output Channel <span class="mono" style="font-size:.7rem; color:var(--text-faint);">— outputChannelOverride, per instance, 0 = auto by default</span></div>
+  <p class="section-note">
+    Every note this instance fires from memory — local-bank replay, Autonomous Fire, or relayed Remote-bank
+    content — is re-stamped onto this instance's own real MIDI channel before going out, so relayed content never
+    fires on the original capturing instance's channel and lands on whatever else happens to share that number
+    downstream. At 0 (auto), the real channel is auto-detected from this instance's own live incoming note-ons —
+    which never arrive at all for a relay-fed leaf instance with no live input of its own, silently leaving it on
+    the hardcoded fallback channel and converging its whole output onto whatever real instrument occupies that
+    channel in its VEPro section. Set an explicit value (matching this instance's own real MIDI channel) for any
+    instrument that has sparse or no live input — in practice, every non-root instance in a single-seed relay
+    topology.
+  </p>
+
+  <div class="section-head"><span class="num">06</span><h2>Full Parameter Table</h2><div class="rule"></div></div>
+  <p class="section-note">All 47 parameters are host-automatable APVTS parameters — there is no plugin-internal state hidden from automation, unlike some of this plugin's denser siblings.</p>
   <div class="table-wrap">
     <table>
       <thead><tr><th>Parameter</th><th>Range / Choices</th><th>Default</th></tr></thead>
       <tbody>
         <tr><td class="pid">bypass</td><td class="range">Off/On</td><td class="range">Off</td></tr>
         <tr><td class="pid">captureMode</td><td class="range">Replace · Overlay · Duck</td><td class="range">Replace</td></tr>
+        <tr><td class="pid">ignoreKeyswitches</td><td class="range">Off/On</td><td class="range">On</td></tr>
+        <tr><td class="pid">ksIgnoreMin / ksIgnoreMax</td><td class="range">0–127</td><td class="range">0 / 35</td></tr>
+        <tr><td class="pid">monophonicCapture</td><td class="range">Off/On</td><td class="range">Off</td></tr>
         <tr><td class="pid">holdBars</td><td class="range">0–16 (0 = pause capturing)</td><td class="range">4</td></tr>
         <tr><td class="pid">holdBarsRandom</td><td class="range">Off/On</td><td class="range">Off</td></tr>
+        <tr><td class="pid">holdBarsRandomMin / holdBarsRandomMax</td><td class="range">1–16</td><td class="range">1 / 8</td></tr>
         <tr><td class="pid">overlapMode</td><td class="range">Overlap · Wait · Skip</td><td class="range">Overlap</td></tr>
         <tr><td class="pid">phraseGapBeats</td><td class="range">0.25–8.0 beats</td><td class="range">1.0</td></tr>
         <tr><td class="pid">minimumInterest</td><td class="range">0–100%</td><td class="range">0%</td></tr>
@@ -290,13 +381,20 @@
         <tr><td class="pid">contentAwareWeighting</td><td class="range">Off/On</td><td class="range">On</td></tr>
         <tr><td class="pid">manualTransform</td><td class="range">Follow Restlessness · None · Transpose · Retrograde · Inversion · Rotation · Length · M7 · Stretch · Interval</td><td class="range">Follow Restlessness</td></tr>
         <tr><td class="pid">transposeSemitones / transposeRandom</td><td class="range">-48…48</td><td class="range">12 / Off</td></tr>
+        <tr><td class="pid">transposeRandomMin / transposeRandomMax</td><td class="range">-48…48</td><td class="range">-12 / 12</td></tr>
         <tr><td class="pid">rotationSteps / rotationRandom</td><td class="range">-16…16</td><td class="range">1 / Off</td></tr>
+        <tr><td class="pid">rotationRandomMin / rotationRandomMax</td><td class="range">-16…16</td><td class="range">-4 / 4</td></tr>
         <tr><td class="pid">lengthPercent / lengthRandom</td><td class="range">1–100%</td><td class="range">50% / Off</td></tr>
+        <tr><td class="pid">lengthRandomMin / lengthRandomMax</td><td class="range">1–100%</td><td class="range">25% / 100%</td></tr>
         <tr><td class="pid">stretchPercent / stretchRandom / stretchQuantized</td><td class="range">25–400%</td><td class="range">100% / Off / Off</td></tr>
+        <tr><td class="pid">stretchRandomMin / stretchRandomMax</td><td class="range">25–400%</td><td class="range">75% / 150%</td></tr>
         <tr><td class="pid">intervalScalePercent / intervalRandom</td><td class="range">0–300%</td><td class="range">150% / Off</td></tr>
+        <tr><td class="pid">intervalRandomMin / intervalRandomMax</td><td class="range">0–300%</td><td class="range">75% / 200%</td></tr>
         <tr><td class="pid">linkHub</td><td class="range">Off/On</td><td class="range">Off</td></tr>
         <tr><td class="pid">broadcastChannel</td><td class="range">0–8 (0 = off)</td><td class="range">0</td></tr>
         <tr><td class="pid">listenChannel</td><td class="range">0–8 (0 = off)</td><td class="range">0</td></tr>
+        <tr><td class="pid">relayEnabled</td><td class="range">Off/On</td><td class="range">Off</td></tr>
+        <tr><td class="pid">outputChannelOverride</td><td class="range">0–16 (0 = auto)</td><td class="range">0</td></tr>
       </tbody>
     </table>
   </div>
