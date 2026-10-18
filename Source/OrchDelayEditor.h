@@ -34,6 +34,8 @@ private:
     class ConnectionMatrixView : public juce::Component
     {
     public:
+        static constexpr int kLegendHeight = 40;   // two lines of legend text under the grid
+
         struct Row
         {
             juce::String label;

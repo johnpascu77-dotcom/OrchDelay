@@ -1259,7 +1259,8 @@ void OrchDelayAudioProcessorEditor::ConnectionMatrixView::setRows (std::vector<R
     // comment. setSize() is a no-op if unchanged, so this is safe to call on
     // every refresh tick.
     const auto geo = computeGridGeometry();
-    setSize (geo.leftGutter + geo.n * geo.cellW, geo.topStrip + geo.n * geo.cellH);
+    // + the "bcN lcN" column right of the grid, and a legend strip under it (it used to be drawn over the last row)
+    setSize (juce::jmax (geo.leftGutter + geo.n * geo.cellW + 70, 520), geo.topStrip + geo.n * geo.cellH + kLegendHeight);
 
     repaint();
 }
@@ -1414,9 +1415,11 @@ void OrchDelayAudioProcessorEditor::ConnectionMatrixView::paint (juce::Graphics&
 
     g.setColour (kMuted.withAlpha (0.7f));
     g.setFont (juce::FontOptions (11.0f));
-    g.drawText ("Click a cell to connect that row's Broadcast Channel to that column's Listen Channel "
-               "\xc2\xb7 click a lit cell to disconnect  \xc2\xb7 orange = two sources sharing one channel",
-               getLocalBounds().removeFromBottom (16), juce::Justification::centred);
+    // Explicit UTF-8: a plain "\xc2\xb7" literal is read as two Latin-1 characters ("A-circumflex" + middle dot).
+    const juce::String legend { juce::CharPointer_UTF8 ("Click a cell to connect that row's Broadcast Channel to that column's Listen Channel "
+                                                       "\xc2\xb7 click a lit cell to disconnect \xc2\xb7 orange = two sources sharing one channel") };
+    g.drawFittedText (legend, juce::Rectangle<int> (8, gridY + n * cellH + 6, getWidth() - 16, kLegendHeight - 8),
+                      juce::Justification::topLeft, 2);
 }
 
 juce::String OrchDelayAudioProcessorEditor::getLinkStatusText() const
