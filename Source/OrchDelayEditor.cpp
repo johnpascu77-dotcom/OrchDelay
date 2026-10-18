@@ -1252,6 +1252,11 @@ OrchDelayLink::ShapeEntry OrchDelayAudioProcessorEditor::buildShapeFromUi() cons
 
 void OrchDelayAudioProcessorEditor::ConnectionMatrixView::setRows (std::vector<Row> newRows)
 {
+    // The editor calls this on every timer tick while the matrix is showing; nothing changes most of the time, so do no
+    // layout and no repaint then (the grid is redrawn only when a row, a label or a channel actually changed).
+    if (newRows == rows)
+        return;
+
     rows = std::move (newRows);
 
     // Size to natural content (fixed-per-cell x row count), not whatever the

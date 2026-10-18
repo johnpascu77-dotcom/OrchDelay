@@ -48,6 +48,12 @@ private:
             // the self row (the editor writes its own parameter directly,
             // no network round-trip needed).
             juce::int64 connectionId = 0;
+
+            bool operator== (const Row& o) const
+            {
+                return broadcastChannel == o.broadcastChannel && listenChannel == o.listenChannel && isSelf == o.isSelf
+                    && connectionId == o.connectionId && label == o.label;
+            }
         };
 
         // Sizes itself to its own natural content size (fixed per-cell
